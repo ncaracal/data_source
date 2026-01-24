@@ -1,12 +1,18 @@
-use clap::{Parser, ValueEnum};
+use clap::Parser;
+pub use clap::ValueEnum;
+use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(name = "data_source")]
 #[command(about = "Download exchange market data and convert to Parquet")]
 pub struct Args {
     /// Symbols to download (e.g., BTCUSDT ETHUSDT)
-    #[arg(short, long, num_args = 1.., required = true)]
-    pub symbols: Vec<String>,
+    #[arg(short, long, num_args = 1..)]
+    symbols: Option<Vec<String>>,
+
+    /// Path to JSON file containing symbols array (e.g., ["BTCUSDT", "ETHUSDT"])
+    #[arg(long)]
+    symbols_json: Option<String>,
 
     /// Exchange name
     #[arg(short, long, default_value = "binance")]
@@ -96,5 +102,34 @@ impl std::fmt::Display for DataType {
             DataType::Trades => write!(f, "trades"),
             DataType::Metrics => write!(f, "metrics"),
         }
+    }
+}
+
+impl Args {
+    /// Get symbols from either --symbols or --symbols-json
+    pub fn get_symbols(&self) -> Result<Vec<String>, String> {
+        let mut symbols = self.symbols.clone().unwrap_or_default();
+
+        // Read from JSON file if provided
+        if let Some(ref json_path) = self.symbols_json {
+            let path = Path::new(json_path);
+            if !path.exists() {
+                return Err(format!("Symbols JSON file not found: {}", json_path));
+            }
+
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read symbols JSON: {}", e))?;
+
+            let json_symbols: Vec<String> = serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse symbols JSON: {}", e))?;
+
+            symbols.extend(json_symbols);
+        }
+
+        if symbols.is_empty() {
+            return Err("No symbols provided. Use --symbols or --symbols-json".to_string());
+        }
+
+        Ok(symbols)
     }
 }

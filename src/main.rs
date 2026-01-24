@@ -46,14 +46,17 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| std::env::var("TRADE_DATA").ok())
         .unwrap_or_else(|| "./data".to_string());
 
+    // Get symbols from CLI args or JSON file
+    let symbols = args.get_symbols().map_err(|e| anyhow::anyhow!(e))?;
+
     info!("Trade data folder: {}", trade_data);
     info!("Exchange: {}", args.exchange);
     info!("Market: {:?}", args.market);
     info!("Data type: {:?}", args.data_type);
-    info!("Symbols: {:?}", args.symbols);
+    info!("Symbols: {:?}", symbols);
 
     // Process each symbol
-    for symbol in &args.symbols {
+    for symbol in &symbols {
         info!("--------- Processing symbol: {} ---------", symbol);
 
         if let Err(e) = process_symbol(&args, &trade_data, symbol).await {

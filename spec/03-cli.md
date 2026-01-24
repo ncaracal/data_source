@@ -3,11 +3,12 @@
 ## Usage
 
 ```bash
-data_source [OPTIONS] --market <MARKET> --data-type <DATA_TYPE> --symbols <SYMBOLS>...
+data_source [OPTIONS] --market <MARKET> --data-type <DATA_TYPE> (--symbols <SYMBOLS>... | --symbols-json <PATH>)
 
 Options:
   -e, --exchange <EXCHANGE>        Exchange name [default: binance]
-  -s, --symbols <SYMBOLS>...       Symbols to download (e.g., BTCUSDT ETHUSDT) [required]
+  -s, --symbols <SYMBOLS>...       Symbols to download (e.g., BTCUSDT ETHUSDT)
+      --symbols-json <PATH>        Path to JSON file containing symbols array
   -m, --market <MARKET>            Market type: spot, future [required]
       --market-sub <MARKET_SUB>    Market sub type: um, cm [default: um]
   -d, --data-type <DATA_TYPE>      Data type: aggTrades, trades, klines [required]
@@ -62,4 +63,7 @@ data_source -s BTCUSDT -m spot -d aggTrades --convert-only
 
 # High concurrency download
 data_source -s BTCUSDT -m spot -d aggTrades --concurrency 8
+
+# Load symbols from JSON file
+data_source --symbols-json symbols.json -m spot -d aggTrades
 ```

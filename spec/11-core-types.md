@@ -10,8 +10,12 @@ use clap::{Parser, ValueEnum};
 #[command(about = "Download exchange market data and convert to Parquet")]
 pub struct Args {
     /// Symbols to download (e.g., BTCUSDT ETHUSDT)
-    #[arg(short, long, num_args = 1.., required = true)]
-    pub symbols: Vec<String>,
+    #[arg(short, long, num_args = 1..)]
+    symbols: Option<Vec<String>>,
+
+    /// Path to JSON file containing symbols array
+    #[arg(long)]
+    symbols_json: Option<String>,
 
     /// Exchange name
     #[arg(short, long, default_value = "binance")]
@@ -44,6 +48,11 @@ pub struct Args {
     /// Only convert existing ZIPs to parquet
     #[arg(long)]
     pub convert_only: bool,
+}
+
+impl Args {
+    /// Get symbols from either --symbols or --symbols-json
+    pub fn get_symbols(&self) -> Result<Vec<String>, String>;
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -94,5 +103,10 @@ pub enum AppError {
 
     #[error("Unsupported exchange: {0}")]
     UnsupportedExchange(String),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
 }
+
+pub type Result<T> = std::result::Result<T, AppError>;
 ```

@@ -302,7 +302,7 @@ fn merge_dataframes(existing: DataFrame, new: DataFrame) -> Result<DataFrame> {
 fn write_parquet(path: &Path, df: DataFrame) -> Result<()> {
     let file = std::fs::File::create(path)?;
     ParquetWriter::new(file)
-        .with_compression(ParquetCompression::Snappy)
+        .with_compression(ParquetCompression::Zstd(None))
         .finish(&mut df.clone())?;
     Ok(())
 }

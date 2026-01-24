@@ -64,6 +64,15 @@ Download_Folder: $TRADE_DATA/{exchange}/{market}/{market_sub}/{aggTrades,metrics
 └─────────────────────────────────────────────────────────────┘
 ```
 
+NOTE: compression method ZSTD
+
+```
+  Example (RVNUSDT_aggTrades_2024):                                                             
+  - SNAPPY: 226 MB                                                                              
+  - ZSTD: 110 MB (~51% smaller)                                                                 
+```                                        
+
+
 ## Features
 
 - **Async Downloads**: Concurrent downloads with configurable parallelism

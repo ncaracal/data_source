@@ -42,28 +42,3 @@ src/
 | HTTP Client | `reqwest` | Async HTTP downloads |
 | Date/Time | `chrono` | Date manipulation |
 | Compression | `zip` | Extract ZIP archives |
-
-## Cargo.toml
-
-```toml
-[package]
-name = "data_source"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-clap = { version = "4", features = ["derive"] }
-dotenvy = "0.15"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-polars = { version = "0.46", features = ["lazy", "parquet", "csv", "dtype-datetime"] }
-reqwest = { version = "0.12", features = ["stream"] }
-chrono = { version = "0.4", features = ["serde"] }
-zip = "2.2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-thiserror = "2"
-futures = "0.3"
-```
