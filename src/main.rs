@@ -8,8 +8,10 @@ mod utils;
 
 use chrono::{Datelike, NaiveDate, Utc};
 use clap::Parser;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
@@ -52,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Process each symbol
     for symbol in &args.symbols {
-        info!("Processing symbol: {}", symbol);
+        info!("--------- Processing symbol: {} ---------", symbol);
 
         if let Err(e) = process_symbol(&args, &trade_data, symbol).await {
             error!("Failed to process {}: {}", symbol, e);
@@ -98,7 +100,7 @@ async fn process_symbol(args: &Args, trade_data: &str, symbol: &str) -> anyhow::
 
     // Convert phase
     if !args.download_only {
-        convert_phase(args, &download_folder, &target_folder, symbol, today)?;
+        convert_phase(args, &download_folder, &target_folder, symbol, start_date, today)?;
     }
 
     Ok(())
@@ -247,6 +249,7 @@ fn convert_phase(
     download_folder: &PathBuf,
     target_folder: &PathBuf,
     symbol: &str,
+    start_date: NaiveDate,
     today: NaiveDate,
 ) -> anyhow::Result<()> {
     info!("=== Convert Phase ===");
@@ -292,38 +295,68 @@ fn convert_phase(
         })
         .collect();
 
-    // Process ZIPs and collect data grouped by year
-    let mut data_by_year: HashMap<i32, Vec<polars::frame::DataFrame>> = HashMap::new();
+    // Filter ZIP files to process (exclude files before start_date and daily files when monthly exists)
+    let zips_to_process: Vec<(PathBuf, i32)> = zip_files
+        .iter()
+        .filter_map(|zip_path| {
+            let filename = zip_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-    for zip_path in &zip_files {
-        let filename = zip_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        // Check if this is a daily file that should be skipped (monthly exists)
-        if let Some(date) = utils::date::extract_year_month_day_from_filename(filename) {
-            if monthly_files.contains(&(date.year(), date.month())) {
-                debug!("Skipping daily {} (monthly exists)", filename);
-                continue;
+            // Check daily files
+            if let Some(date) = utils::date::extract_year_month_day_from_filename(filename) {
+                // Skip if before start_date
+                if date < start_date {
+                    debug!("Skipping {} (before start_date {})", filename, start_date);
+                    return None;
+                }
+                // Skip if monthly file exists for this month
+                if monthly_files.contains(&(date.year(), date.month())) {
+                    debug!("Skipping daily {} (monthly exists)", filename);
+                    return None;
+                }
+            } else if let Some((year, month)) = extract_year_month_from_filename(filename) {
+                // Check monthly files - skip if the entire month is before start_date
+                // A month is before start_date if the last day of that month < start_date
+                let last_day = if month == 12 {
+                    NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap().pred_opt().unwrap()
+                } else {
+                    NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap().pred_opt().unwrap()
+                };
+                if last_day < start_date {
+                    debug!("Skipping monthly {} (before start_date {})", filename, start_date);
+                    return None;
+                }
             }
-        }
 
-        // Extract year from filename
-        let year = match extract_year_from_filename(filename) {
-            Some(y) => y,
-            None => {
-                warn!("Cannot extract year from filename: {}", filename);
-                continue;
-            }
-        };
+            // Extract year from filename
+            let year = extract_year_from_filename(filename)?;
+            Some((zip_path.clone(), year))
+        })
+        .collect();
 
-        match parse_zip_to_dataframe(zip_path, args.market) {
+    if zips_to_process.is_empty() {
+        info!("No ZIP files to process after filtering");
+        return Ok(());
+    }
+
+    info!("Processing {} ZIP files in parallel", zips_to_process.len());
+
+    // Process ZIPs in parallel using rayon
+    let market = args.market;
+    let data_by_year: Mutex<HashMap<i32, Vec<polars::frame::DataFrame>>> = Mutex::new(HashMap::new());
+
+    zips_to_process.par_iter().for_each(|(zip_path, year)| {
+        match parse_zip_to_dataframe(zip_path, market) {
             Ok(df) => {
-                data_by_year.entry(year).or_default().push(df);
+                let mut map = data_by_year.lock().unwrap();
+                map.entry(*year).or_default().push(df);
             }
             Err(e) => {
                 warn!("Failed to parse {:?}: {}", zip_path, e);
             }
         }
-    }
+    });
+
+    let data_by_year = data_by_year.into_inner().unwrap();
 
     if data_by_year.is_empty() {
         info!("No data to write");

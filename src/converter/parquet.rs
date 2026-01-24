@@ -87,8 +87,6 @@ pub fn merge_and_write_parquets(
     let new_data_by_year = group_by_year(new_data)?;
 
     for (year, year_df) in new_data_by_year {
-        let is_current_year = year == today.year();
-
         // Find existing parquet for this year
         let existing_pattern = format!("{}_{}_{}", symbol, data_type, year);
         let mut existing_path = None;
@@ -112,11 +110,24 @@ pub fn merge_and_write_parquets(
             year_df
         };
 
-        // Determine filename
-        let date_suffix = if is_current_year {
-            Some(format!("{:02}-{:02}", today.month(), today.day()))
-        } else {
+        // Get the last date from the data
+        let last_date = merged_df
+            .column("time")
+            .ok()
+            .and_then(|s| s.datetime().ok())
+            .and_then(|dt| dt.max())
+            .and_then(|ts| {
+                let secs = ts / 1_000_000;
+                chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.date_naive())
+            })
+            .unwrap_or(today);
+
+        // Only add date suffix if year is incomplete (not ending on Dec 31)
+        let is_year_complete = last_date.month() == 12 && last_date.day() == 31;
+        let date_suffix = if is_year_complete {
             None
+        } else {
+            Some(format!("{:02}-{:02}", last_date.month(), last_date.day()))
         };
 
         let filename = build_parquet_filename(symbol, data_type, year, date_suffix.as_deref());
@@ -153,11 +164,14 @@ pub fn merge_and_write_year_parquet(
 
     std::fs::create_dir_all(target_folder)?;
 
-    // Combine all DataFrames for this year
-    let combined = dfs.into_iter().reduce(|mut acc, df| {
-        acc.vstack_mut(&df).ok();
-        acc
-    }).unwrap();
+    // Use concat for efficient DataFrame combination (much faster than multiple vstack_mut)
+    let combined = if dfs.len() == 1 {
+        dfs.into_iter().next().unwrap()
+    } else {
+        // Convert to lazy frames and use concat
+        let lazy_frames: Vec<LazyFrame> = dfs.into_iter().map(|df| df.lazy()).collect();
+        concat(lazy_frames, UnionArgs::default())?.collect()?
+    };
 
     info!("{} year {} has {} rows", symbol, year, combined.height());
 
@@ -175,7 +189,7 @@ pub fn merge_and_write_year_parquet(
         }
     }
 
-    // Merge with existing data
+    // Merge with existing data (only deduplicate when merging with existing)
     let merged_df = if let Some(ref existing) = existing_path {
         let existing_df = LazyFrame::scan_parquet(existing, Default::default())?
             .collect()?;
@@ -187,13 +201,24 @@ pub fn merge_and_write_year_parquet(
             .collect()?
     };
 
-    let is_current_year = year == today.year();
+    // Get the last date from the data
+    let last_date = merged_df
+        .column("time")
+        .ok()
+        .and_then(|s| s.datetime().ok())
+        .and_then(|dt| dt.max())
+        .and_then(|ts| {
+            let secs = ts / 1_000_000;
+            chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.date_naive())
+        })
+        .unwrap_or(today);
 
-    // Determine filename
-    let date_suffix = if is_current_year {
-        Some(format!("{:02}-{:02}", today.month(), today.day()))
-    } else {
+    // Only add date suffix if year is incomplete (not ending on Dec 31)
+    let is_year_complete = last_date.month() == 12 && last_date.day() == 31;
+    let date_suffix = if is_year_complete {
         None
+    } else {
+        Some(format!("{:02}-{:02}", last_date.month(), last_date.day()))
     };
 
     let filename = build_parquet_filename(symbol, data_type, year, date_suffix.as_deref());

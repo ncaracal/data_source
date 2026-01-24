@@ -65,7 +65,7 @@ pub fn build_download_folder(
 /// Current/Incomplete: {SYMBOL}_aggTrades_{YYYY-MM-DD}.parquet
 pub fn build_parquet_filename(symbol: &str, data_type: DataType, year: i32, date_suffix: Option<&str>) -> String {
     match date_suffix {
-        Some(suffix) => format!("{}_{}_{}_{}.parquet", symbol, data_type, year, suffix),
+        Some(suffix) => format!("{}_{}_{}-{}.parquet", symbol, data_type, year, suffix),
         None => format!("{}_{}_{}.parquet", symbol, data_type, year),
     }
 }

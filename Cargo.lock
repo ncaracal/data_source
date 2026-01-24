@@ -590,6 +590,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "polars",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",

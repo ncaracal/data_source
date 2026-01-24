@@ -18,7 +18,10 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market) -> Result<DataFra
 
     // Get the first (and usually only) CSV file
     let mut csv_file = archive.by_index(0)?;
-    let mut csv_data = Vec::new();
+
+    // Pre-allocate buffer based on uncompressed size for efficiency
+    let uncompressed_size = csv_file.size() as usize;
+    let mut csv_data = Vec::with_capacity(uncompressed_size);
     csv_file.read_to_end(&mut csv_data)?;
 
     let cursor = Cursor::new(csv_data);
@@ -74,19 +77,17 @@ fn parse_spot_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
 
 /// Normalize DataFrame columns and add derived columns
 fn normalize_dataframe(df: DataFrame) -> Result<DataFrame> {
+    // Get column names directly from DataFrame schema (no collect needed)
+    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+
     let mut lf = df.lazy();
 
-    // Rename columns to standard names if needed
-    let columns = lf.clone().collect()?.get_column_names_owned();
-
     // Ensure we have the expected columns - handle different naming conventions
-    if columns.contains(&PlSmallStr::from("transact_time")) {
-        // Already has correct name
-    } else if columns.iter().any(|c| c.as_str().contains("time")) {
+    if !columns.contains(&"transact_time".to_string()) {
         // Find and rename the time column
-        for col in &columns {
-            if col.as_str().contains("time") && col.as_str() != "transact_time" {
-                lf = lf.rename([col.as_str()], ["transact_time"], true);
+        for col_name in &columns {
+            if col_name.contains("time") && col_name != "transact_time" {
+                lf = lf.rename([col_name.as_str()], ["transact_time"], true);
                 break;
             }
         }
