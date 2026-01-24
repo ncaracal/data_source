@@ -1,0 +1,129 @@
+use crate::cli::Market;
+use crate::error::{AppError, Result};
+use polars::prelude::*;
+use std::io::{Cursor, Read};
+use std::path::Path;
+use tracing::{debug, info};
+
+/// Extract CSV from ZIP and parse into DataFrame
+pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market) -> Result<DataFrame> {
+    debug!("Parsing ZIP: {:?}", zip_path);
+
+    let file = std::fs::File::open(zip_path)?;
+    let mut archive = ::zip::ZipArchive::new(file)?;
+
+    if archive.len() == 0 {
+        return Err(AppError::Parse("Empty ZIP archive".to_string()));
+    }
+
+    // Get the first (and usually only) CSV file
+    let mut csv_file = archive.by_index(0)?;
+    let mut csv_data = Vec::new();
+    csv_file.read_to_end(&mut csv_data)?;
+
+    let cursor = Cursor::new(csv_data);
+
+    // Parse CSV based on market type
+    // Futures has header, Spot has no header
+    let df = match market {
+        Market::Future => parse_futures_csv(cursor)?,
+        Market::Spot => parse_spot_csv(cursor)?,
+    };
+
+    info!(
+        "Parsed {} rows from {:?}",
+        df.height(),
+        zip_path.file_name().unwrap_or_default()
+    );
+
+    Ok(df)
+}
+
+/// Parse Futures CSV (has header row)
+fn parse_futures_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let df = CsvReadOptions::default()
+        .with_has_header(true)
+        .into_reader_with_file_handle(cursor)
+        .finish()?;
+
+    normalize_dataframe(df)
+}
+
+/// Parse Spot CSV (no header row)
+fn parse_spot_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    // Column names for spot aggTrades (no header in file)
+    let schema = Schema::from_iter([
+        Field::new("agg_trade_id".into(), DataType::Int64),
+        Field::new("price".into(), DataType::Float64),
+        Field::new("quantity".into(), DataType::Float64),
+        Field::new("first_trade_id".into(), DataType::Int64),
+        Field::new("last_trade_id".into(), DataType::Int64),
+        Field::new("transact_time".into(), DataType::Int64),
+        Field::new("is_buyer_maker".into(), DataType::Boolean),
+        Field::new("is_best_match".into(), DataType::Boolean),
+    ]);
+
+    let df = CsvReadOptions::default()
+        .with_has_header(false)
+        .with_schema(Some(Arc::new(schema)))
+        .into_reader_with_file_handle(cursor)
+        .finish()?;
+
+    normalize_dataframe(df)
+}
+
+/// Normalize DataFrame columns and add derived columns
+fn normalize_dataframe(df: DataFrame) -> Result<DataFrame> {
+    let mut lf = df.lazy();
+
+    // Rename columns to standard names if needed
+    let columns = lf.clone().collect()?.get_column_names_owned();
+
+    // Ensure we have the expected columns - handle different naming conventions
+    if columns.contains(&PlSmallStr::from("transact_time")) {
+        // Already has correct name
+    } else if columns.iter().any(|c| c.as_str().contains("time")) {
+        // Find and rename the time column
+        for col in &columns {
+            if col.as_str().contains("time") && col.as_str() != "transact_time" {
+                lf = lf.rename([col.as_str()], ["transact_time"], true);
+                break;
+            }
+        }
+    }
+
+    // Auto-detect time unit: if transact_time > 1e14, it's microseconds; otherwise milliseconds
+    // Milliseconds for 2020-2030: ~1.5e12 to ~1.9e12 (13 digits)
+    // Microseconds for 2020-2030: ~1.5e15 to ~1.9e15 (16 digits)
+    let ts_microseconds = when(col("transact_time").gt(lit(1_000_000_000_000_000i64)))
+        .then(col("transact_time")) // already microseconds
+        .otherwise(col("transact_time") * lit(1000i64)); // convert ms to us
+
+    // Add time column (datetime in microseconds)
+    lf = lf.with_column(
+        ts_microseconds
+            .clone()
+            .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+            .alias("time"),
+    );
+
+    // Add ts column (timestamp in microseconds)
+    lf = lf.with_column(ts_microseconds.alias("ts"));
+
+    // Select and order columns
+    let result = lf
+        .select([
+            col("agg_trade_id"),
+            col("time"),
+            col("price"),
+            col("quantity"),
+            col("first_trade_id"),
+            col("last_trade_id"),
+            col("is_buyer_maker"),
+            col("is_best_match"),
+            col("ts"),
+        ])
+        .collect()?;
+
+    Ok(result)
+}

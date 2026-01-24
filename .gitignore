@@ -1,0 +1,8 @@
+/target
+/tmp
+.env
+.claude/
+data/
+
+
+exchange_info_*.json
