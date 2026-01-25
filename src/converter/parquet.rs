@@ -292,7 +292,7 @@ fn merge_dataframes(existing: DataFrame, new: DataFrame) -> Result<DataFrame> {
     let result = combined
         .lazy()
         .unique(Some(vec!["agg_trade_id".into()]), UniqueKeepStrategy::Last)
-        .sort(["agg_trade_id"], Default::default())
+        .sort(["time"], Default::default())
         .collect()?;
 
     Ok(result)
