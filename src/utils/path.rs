@@ -31,14 +31,13 @@ pub fn build_target_folder(
 }
 
 /// Build the download folder path for ZIP files
-/// $TRADE_DATA/{exchange}/{market}/{market_sub}/{data_type}/_download/{symbol}/
-pub fn build_download_folder(
+/// $TRADE_DATA/{exchange}/{market}/{market_sub}/{data_type}/_download/
+pub fn build_download_base(
     trade_data: &str,
     exchange: &str,
     market: Market,
     market_sub: MarketSub,
-    data_type: DataType,
-    symbol: &str,
+    data_type: DataType
 ) -> PathBuf {
     let mut path = PathBuf::from(trade_data);
     path.push(exchange);
@@ -49,13 +48,27 @@ pub fn build_download_folder(
             path.push(data_type.to_string());
         }
         Market::Future => {
-            path.push("futures");
+            path.push("future");
             path.push(market_sub.to_string());
             path.push(data_type.to_string());
         }
     }
 
     path.push("_download");
+    path
+}
+
+/// Build the download folder path for ZIP files
+/// $TRADE_DATA/{exchange}/{market}/{market_sub}/{data_type}/_download/{symbol}/
+pub fn build_download_folder(
+    trade_data: &str,
+    exchange: &str,
+    market: Market,
+    market_sub: MarketSub,
+    data_type: DataType,
+    symbol: &str,
+) -> PathBuf {
+    let mut path = build_download_base(trade_data, exchange, market, market_sub, data_type);
     path.push(symbol);
     path
 }

@@ -20,7 +20,7 @@ use converter::{find_existing_parquets, get_last_date_from_parquets, merge_and_w
 use downloader::{DownloadResult, DownloadTask, Downloader};
 use exchange::binance::{build_daily_url, build_daily_zip_filename, build_monthly_url, build_monthly_zip_filename};
 use utils::date::{extract_year_from_filename, extract_year_month_from_filename, generate_daily_dates, generate_monthly_dates, is_month_complete};
-use utils::path::{build_download_folder, build_target_folder};
+use utils::path::{build_download_base, build_download_folder, build_target_folder};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -49,6 +49,26 @@ async fn main() -> anyhow::Result<()> {
     // Get symbols from CLI args or JSON file
     let symbols = args.get_symbols().map_err(|e| anyhow::anyhow!(e))?;
 
+    // Check if _download folder is > 1GB, remove if so
+    let download_base = build_download_base(
+        &trade_data,
+        &args.exchange,
+        args.market,
+        args.market_sub,
+        args.data_type,
+    );
+    const ONE_GB: u64 = 1024 * 1024 * 1024;
+    let folder_size = get_folder_size(&download_base);
+    
+    if folder_size > ONE_GB {
+        warn!(
+            "Download folder {:?} is {:.2} GB, removing...",
+            download_base,
+            folder_size as f64 / ONE_GB as f64
+        );
+        std::fs::remove_dir_all(&download_base)?;
+    }
+
     info!("Trade data folder: {}", trade_data);
     info!("Exchange: {}", args.exchange);
     info!("Market: {:?}", args.market);
@@ -56,8 +76,9 @@ async fn main() -> anyhow::Result<()> {
     info!("Symbols: {:?}", symbols);
 
     // Process each symbol
-    for symbol in &symbols {
-        info!("--------- Processing symbol: {} ---------", symbol);
+    let total = symbols.len();
+    for (i, symbol) in symbols.iter().enumerate() {
+        info!("--------- Processing symbol: {} ({}/{}) ---------", symbol, i + 1, total);
 
         if let Err(e) = process_symbol(&args, &trade_data, symbol).await {
             error!("Failed to process {}: {}", symbol, e);
@@ -66,6 +87,30 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Done!");
     Ok(())
+}
+
+/// Calculate folder size in bytes (recursive)
+fn get_folder_size(path: &PathBuf) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+
+    std::fs::read_dir(path)
+        .ok()
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| {
+                    let path = e.path();
+                    if path.is_dir() {
+                        get_folder_size(&path)
+                    } else {
+                        e.metadata().map(|m| m.len()).unwrap_or(0)
+                    }
+                })
+                .sum()
+        })
+        .unwrap_or(0)
 }
 
 async fn process_symbol(args: &Args, trade_data: &str, symbol: &str) -> anyhow::Result<()> {
