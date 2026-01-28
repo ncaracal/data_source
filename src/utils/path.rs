@@ -20,7 +20,7 @@ pub fn build_target_folder(
             path.push(data_type.to_string());
         }
         Market::Future => {
-            path.push("futures");
+            path.push("future");
             path.push(market_sub.to_string());
             path.push(data_type.to_string());
         }

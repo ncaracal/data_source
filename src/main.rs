@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
-use cli::Args;
+use cli::{Args, DataType, Market};
 use converter::{find_existing_parquets, get_last_date_from_parquets, merge_and_write_year_parquet, parse_zip_to_dataframe};
 use downloader::{DownloadResult, DownloadTask, Downloader};
 use exchange::binance::{build_daily_url, build_daily_zip_filename, build_monthly_url, build_monthly_zip_filename};
@@ -29,6 +29,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Parse CLI arguments
     let args = Args::parse();
+
+    // Validate: metrics is only supported for futures market
+    if args.data_type == DataType::Metrics && args.market == Market::Spot {
+        eprintln!("Error: metrics data type is not supported for spot market");
+        std::process::exit(1);
+    }
 
     // Initialize logging
     let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
@@ -200,45 +206,50 @@ async fn download_phase(
         })
         .unwrap_or_default();
 
-    // Generate monthly download tasks
-    let monthly_dates = generate_monthly_dates(start_date, today);
+    // Generate monthly download tasks (skip for metrics - no monthly archives available)
     let mut monthly_months: HashSet<(i32, u32)> = HashSet::new();
 
-    for date in monthly_dates {
-        let year = date.year();
-        let month = date.month();
+    if args.data_type != DataType::Metrics {
+        let monthly_dates = generate_monthly_dates(start_date, today);
 
-        // Only download monthly if month is complete
-        if is_month_complete(date, today) {
-            let filename = build_monthly_zip_filename(symbol, args.data_type, year, month);
+        for date in monthly_dates {
+            let year = date.year();
+            let month = date.month();
 
-            // Check if already downloaded (resume support)
-            if existing_files.contains(&filename) {
-                debug!("Skipping existing: {}", filename);
+            // Only download monthly if month is complete
+            if is_month_complete(date, today) {
+                let filename = build_monthly_zip_filename(symbol, args.data_type, year, month);
+
+                // Check if already downloaded (resume support)
+                if existing_files.contains(&filename) {
+                    debug!("Skipping existing: {}", filename);
+                    monthly_months.insert((year, month));
+                    continue;
+                }
+
+                let url = build_monthly_url(symbol, args.market, args.market_sub, args.data_type, year, month);
+                let output_path = download_folder.join(&filename);
+
+                tasks.push(DownloadTask {
+                    url,
+                    output_path,
+                    filename: filename.clone(),
+                });
+
                 monthly_months.insert((year, month));
-                continue;
             }
-
-            let url = build_monthly_url(symbol, args.market, args.market_sub, args.data_type, year, month);
-            let output_path = download_folder.join(&filename);
-
-            tasks.push(DownloadTask {
-                url,
-                output_path,
-                filename: filename.clone(),
-            });
-
-            monthly_months.insert((year, month));
         }
     }
 
-    // Generate daily download tasks (for current month or months without monthly ZIP)
+    // Generate daily download tasks
+    // For metrics: download all daily files (no monthly available)
+    // For others: only for current month or months without monthly ZIP
     let daily_dates = generate_daily_dates(start_date, today.pred_opt().unwrap_or(today));
     for date in daily_dates {
         let year = date.year();
         let month = date.month();
 
-        // Skip if monthly ZIP exists or will be downloaded
+        // Skip if monthly ZIP exists or will be downloaded (not applicable for metrics)
         if monthly_months.contains(&(year, month)) {
             continue;
         }
@@ -390,10 +401,11 @@ fn convert_phase(
 
     // Process ZIPs in parallel using rayon
     let market = args.market;
+    let data_type = args.data_type;
     let data_by_year: Mutex<HashMap<i32, Vec<polars::frame::DataFrame>>> = Mutex::new(HashMap::new());
 
     zips_to_process.par_iter().for_each(|(zip_path, year)| {
-        match parse_zip_to_dataframe(zip_path, market) {
+        match parse_zip_to_dataframe(zip_path, market, data_type) {
             Ok(df) => {
                 let mut map = data_by_year.lock().unwrap();
                 map.entry(*year).or_default().push(df);

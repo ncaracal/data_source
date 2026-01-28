@@ -91,7 +91,7 @@ pub enum DataType {
     AggTrades,
     #[value(name = "trades")]
     Trades,
-    #[value(name = "metrics")]
+    #[value(name = "metrics", alias = "metric")]
     Metrics,
 }
 

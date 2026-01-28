@@ -1,4 +1,4 @@
-use crate::cli::DataType;
+use crate::cli::DataType as CliDataType;
 use crate::error::Result;
 use crate::utils::path::build_parquet_filename;
 use chrono::{Datelike, NaiveDate};
@@ -70,7 +70,7 @@ pub fn get_last_date_from_parquets(parquet_files: &[PathBuf]) -> Option<NaiveDat
 pub fn merge_and_write_parquets(
     target_folder: &Path,
     symbol: &str,
-    data_type: DataType,
+    data_type: CliDataType,
     new_data: DataFrame,
     today: NaiveDate,
 ) -> Result<()> {
@@ -105,7 +105,7 @@ pub fn merge_and_write_parquets(
         let merged_df = if let Some(ref existing) = existing_path {
             let existing_df = LazyFrame::scan_parquet(existing, Default::default())?
                 .collect()?;
-            merge_dataframes(existing_df, year_df)?
+            merge_dataframes(existing_df, year_df, data_type)?
         } else {
             year_df
         };
@@ -153,7 +153,7 @@ pub fn merge_and_write_parquets(
 pub fn merge_and_write_year_parquet(
     target_folder: &Path,
     symbol: &str,
-    data_type: DataType,
+    data_type: CliDataType,
     year: i32,
     dfs: Vec<DataFrame>,
     today: NaiveDate,
@@ -193,7 +193,7 @@ pub fn merge_and_write_year_parquet(
     let merged_df = if let Some(ref existing) = existing_path {
         let existing_df = LazyFrame::scan_parquet(existing, Default::default())?
             .collect()?;
-        merge_dataframes(existing_df, combined)?
+        merge_dataframes(existing_df, combined, data_type)?
     } else {
         // Fresh data: just sort by time (no duplicates expected from different ZIP files)
         combined.lazy()
@@ -201,20 +201,31 @@ pub fn merge_and_write_year_parquet(
             .collect()?
     };
 
-    // Get the last date from the data
+    // Get the last date from the data within the target year
+    // Filter to only dates in this year to handle midnight boundary cases
     let last_date = merged_df
-        .column("time")
+        .clone()
+        .lazy()
+        .filter(col("time").dt().year().eq(lit(year)))
+        .select([col("time").max()])
+        .collect()
         .ok()
-        .and_then(|s| s.datetime().ok())
-        .and_then(|dt| dt.max())
+        .and_then(|df| df.column("time").ok().cloned())
+        .and_then(|s| s.datetime().ok().cloned())
+        .and_then(|dt| dt.get(0))
         .and_then(|ts| {
-            let secs = ts / 1_000_000;
+            // For metrics: milliseconds, for others: microseconds
+            let secs = if data_type == CliDataType::Metrics {
+                ts / 1_000
+            } else {
+                ts / 1_000_000
+            };
             chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.date_naive())
         })
         .unwrap_or(today);
 
     // Only add date suffix if year is incomplete (not ending on Dec 31)
-    let is_year_complete = last_date.month() == 12 && last_date.day() == 31;
+    let is_year_complete = last_date.year() == year && last_date.month() == 12 && last_date.day() == 31;
     let date_suffix = if is_year_complete {
         None
     } else {
@@ -284,14 +295,20 @@ fn group_by_year(df: DataFrame) -> Result<HashMap<i32, DataFrame>> {
     Ok(result)
 }
 
-/// Merge two DataFrames, removing duplicates based on agg_trade_id
-fn merge_dataframes(existing: DataFrame, new: DataFrame) -> Result<DataFrame> {
+/// Merge two DataFrames, removing duplicates based on unique key
+fn merge_dataframes(existing: DataFrame, new: DataFrame, data_type: CliDataType) -> Result<DataFrame> {
     let combined = existing.vstack(&new)?;
 
-    // Remove duplicates and sort by agg_trade_id
+    // Use different dedup key based on data type
+    let unique_key = match data_type {
+        CliDataType::Metrics => "time",
+        CliDataType::AggTrades | CliDataType::Trades => "agg_trade_id",
+    };
+
+    // Remove duplicates and sort by time
     let result = combined
         .lazy()
-        .unique(Some(vec!["agg_trade_id".into()]), UniqueKeepStrategy::Last)
+        .unique(Some(vec![unique_key.into()]), UniqueKeepStrategy::Last)
         .sort(["time"], Default::default())
         .collect()?;
 

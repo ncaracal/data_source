@@ -1,4 +1,4 @@
-use crate::cli::Market;
+use crate::cli::{DataType as CliDataType, Market};
 use crate::error::{AppError, Result};
 use polars::prelude::*;
 use std::io::{Cursor, Read};
@@ -6,7 +6,7 @@ use std::path::Path;
 use tracing::{debug, info};
 
 /// Extract CSV from ZIP and parse into DataFrame
-pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market) -> Result<DataFrame> {
+pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market, data_type: CliDataType) -> Result<DataFrame> {
     debug!("Parsing ZIP: {:?}", zip_path);
 
     let file = std::fs::File::open(zip_path)?;
@@ -26,11 +26,13 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market) -> Result<DataFra
 
     let cursor = Cursor::new(csv_data);
 
-    // Parse CSV based on market type
-    // Futures has header, Spot has no header
-    let df = match market {
-        Market::Future => parse_futures_csv(cursor)?,
-        Market::Spot => parse_spot_csv(cursor)?,
+    // Parse CSV based on market type and data type
+    let df = match data_type {
+        CliDataType::Metrics => parse_metrics_csv(cursor)?,
+        CliDataType::AggTrades | CliDataType::Trades => match market {
+            Market::Future => parse_futures_csv(cursor)?,
+            Market::Spot => parse_spot_csv(cursor)?,
+        },
     };
 
     info!(
@@ -50,6 +52,16 @@ fn parse_futures_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
         .finish()?;
 
     normalize_dataframe(df)
+}
+
+/// Parse Metrics CSV (has header row)
+fn parse_metrics_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let df = CsvReadOptions::default()
+        .with_has_header(true)
+        .into_reader_with_file_handle(cursor)
+        .finish()?;
+
+    normalize_metrics_dataframe(df)
 }
 
 /// Parse Spot CSV (no header row)
@@ -73,6 +85,50 @@ fn parse_spot_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
         .finish()?;
 
     normalize_dataframe(df)
+}
+
+/// Normalize Metrics DataFrame columns (parse create_time datetime string to time)
+fn normalize_metrics_dataframe(df: DataFrame) -> Result<DataFrame> {
+    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+
+    let mut lf = df.lazy();
+
+    // Parse create_time datetime string to proper datetime column
+    if columns.contains(&"create_time".to_string()) {
+        // create_time is like "2025-12-31 00:05:00", parse as datetime using strptime
+        lf = lf.with_column(
+            col("create_time")
+                .str()
+                .strptime(
+                    DataType::Datetime(TimeUnit::Milliseconds, None),
+                    StrptimeOptions {
+                        format: Some("%Y-%m-%d %H:%M:%S".into()),
+                        ..Default::default()
+                    },
+                    lit("raise"),
+                )
+                .alias("time"),
+        );
+        lf = lf.drop(["create_time"]);
+    }
+
+    // Reorder columns: time first, then others
+    lf = lf.select([
+        col("time"),
+        col("symbol"),
+        col("sum_open_interest"),
+        col("sum_open_interest_value"),
+        col("count_toptrader_long_short_ratio"),
+        col("sum_toptrader_long_short_ratio"),
+        col("count_long_short_ratio"),
+        col("sum_taker_long_short_vol_ratio"),
+    ]);
+
+    // Sort by time
+    lf = lf.sort(["time"], Default::default());
+
+    let result = lf.collect()?;
+    Ok(result)
 }
 
 /// Normalize DataFrame columns and add derived columns
