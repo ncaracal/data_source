@@ -42,6 +42,18 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
+    // Validate: BVOLIndex is only supported for option market
+    if args.data_type == DataType::BVOLIndex && args.market != Market::Option {
+        eprintln!("Error: BVOLIndex data type is only supported for option market");
+        std::process::exit(1);
+    }
+
+    // Validate: option market only supports BVOLIndex
+    if args.market == Market::Option && args.data_type != DataType::BVOLIndex {
+        eprintln!("Error: option market only supports BVOLIndex data type");
+        std::process::exit(1);
+    }
+
     // Initialize logging
     let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
     tracing_subscriber::fmt()
@@ -218,7 +230,7 @@ async fn download_phase(
     // For fundingRate: only monthly available (no daily)
     // For metrics: only daily available (no monthly)
     // For others: prefer monthly, fall back to daily for incomplete months
-    let has_monthly = args.data_type != DataType::Metrics;
+    let has_monthly = args.data_type != DataType::Metrics && args.data_type != DataType::BVOLIndex;
     let has_daily = args.data_type != DataType::FundingRate;
 
     if has_monthly {

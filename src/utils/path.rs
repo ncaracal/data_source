@@ -24,6 +24,10 @@ pub fn build_target_folder(
             path.push(market_sub.to_string());
             path.push(data_type.to_string());
         }
+        Market::Option => {
+            path.push("option");
+            path.push(data_type.to_string());
+        }
     }
 
     path.push(symbol);
@@ -50,6 +54,10 @@ pub fn build_download_base(
         Market::Future => {
             path.push("future");
             path.push(market_sub.to_string());
+            path.push(data_type.to_string());
+        }
+        Market::Option => {
+            path.push("option");
             path.push(data_type.to_string());
         }
     }

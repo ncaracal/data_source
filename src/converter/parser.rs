@@ -30,9 +30,10 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market, data_type: CliDat
     let df = match data_type {
         CliDataType::Metrics => parse_metrics_csv(cursor)?,
         CliDataType::FundingRate => parse_funding_rate_csv(cursor)?,
+        CliDataType::BVOLIndex => parse_bvol_index_csv(cursor)?,
         CliDataType::AggTrades | CliDataType::Trades => match market {
             Market::Future => parse_futures_csv(cursor)?,
-            Market::Spot => parse_spot_csv(cursor)?,
+            Market::Spot | Market::Option => parse_spot_csv(cursor)?,
         },
     };
 
@@ -74,6 +75,17 @@ fn parse_funding_rate_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
         .finish()?;
 
     normalize_funding_rate_dataframe(df)
+}
+
+/// Parse BVOLIndex CSV (has header row)
+/// Columns: calc_time, symbol, base_asset, quote_asset, index_value
+fn parse_bvol_index_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let df = CsvReadOptions::default()
+        .with_has_header(true)
+        .into_reader_with_file_handle(cursor)
+        .finish()?;
+
+    normalize_bvol_index_dataframe(df)
 }
 
 /// Parse Spot CSV (no header row)
@@ -159,6 +171,33 @@ fn normalize_metrics_dataframe(df: DataFrame) -> Result<DataFrame> {
         col("sum_toptrader_long_short_ratio"),
         col("count_long_short_ratio"),
         col("sum_taker_long_short_vol_ratio"),
+    ]);
+
+    // Sort by time
+    lf = lf.sort(["time"], Default::default());
+
+    let result = lf.collect()?;
+    Ok(result)
+}
+
+/// Normalize BVOLIndex DataFrame columns (convert calc_time milliseconds to datetime)
+fn normalize_bvol_index_dataframe(df: DataFrame) -> Result<DataFrame> {
+    let mut lf = df.lazy();
+
+    // calc_time is milliseconds since epoch, convert to datetime
+    lf = lf.with_column(
+        col("calc_time")
+            .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
+            .alias("time"),
+    );
+
+    // Select columns in order: time, symbol, base_asset, quote_asset, index_value
+    lf = lf.select([
+        col("time"),
+        col("symbol"),
+        col("base_asset"),
+        col("quote_asset"),
+        col("index_value"),
     ]);
 
     // Sort by time

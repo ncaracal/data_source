@@ -222,7 +222,7 @@ pub fn merge_and_write_year_parquet(
         .and_then(|dt| dt.get(0))
         .and_then(|ts| {
             // For metrics and fundingRate: milliseconds, for others: microseconds
-            let secs = if data_type == CliDataType::Metrics || data_type == CliDataType::FundingRate {
+            let secs = if data_type == CliDataType::Metrics || data_type == CliDataType::FundingRate || data_type == CliDataType::BVOLIndex {
                 ts / 1_000
             } else {
                 ts / 1_000_000
@@ -308,7 +308,7 @@ fn merge_dataframes(existing: DataFrame, new: DataFrame, data_type: CliDataType)
 
     // Use different dedup key based on data type
     let unique_key = match data_type {
-        CliDataType::Metrics | CliDataType::FundingRate => "time",
+        CliDataType::Metrics | CliDataType::FundingRate | CliDataType::BVOLIndex => "time",
         CliDataType::AggTrades | CliDataType::Trades => "agg_trade_id",
     };
 

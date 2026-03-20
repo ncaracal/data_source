@@ -59,6 +59,7 @@ pub struct Args {
 pub enum Market {
     Spot,
     Future,
+    Option,
 }
 
 impl std::fmt::Display for Market {
@@ -66,6 +67,7 @@ impl std::fmt::Display for Market {
         match self {
             Market::Spot => write!(f, "spot"),
             Market::Future => write!(f, "futures"),
+            Market::Option => write!(f, "option"),
         }
     }
 }
@@ -95,6 +97,8 @@ pub enum DataType {
     Metrics,
     #[value(name = "fundingRate")]
     FundingRate,
+    #[value(name = "BVOLIndex")]
+    BVOLIndex,
 }
 
 impl std::fmt::Display for DataType {
@@ -104,6 +108,7 @@ impl std::fmt::Display for DataType {
             DataType::Trades => write!(f, "trades"),
             DataType::Metrics => write!(f, "metrics"),
             DataType::FundingRate => write!(f, "fundingRate"),
+            DataType::BVOLIndex => write!(f, "BVOLIndex"),
         }
     }
 }

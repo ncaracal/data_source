@@ -18,6 +18,7 @@ pub fn build_monthly_url(
     let market_path = match market {
         Market::Spot => "spot".to_string(),
         Market::Future => format!("futures/{}", market_sub),
+        Market::Option => "option".to_string(),
     };
 
     format!(
@@ -37,6 +38,7 @@ pub fn build_daily_url(
     let market_path = match market {
         Market::Spot => "spot".to_string(),
         Market::Future => format!("futures/{}", market_sub),
+        Market::Option => "option".to_string(),
     };
 
     format!(
