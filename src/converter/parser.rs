@@ -214,6 +214,11 @@ fn normalize_dataframe(df: DataFrame) -> Result<DataFrame> {
 
     let mut lf = df.lazy();
 
+    // Add is_best_match column if missing (futures data doesn't have it, spot only)
+    if !columns.contains(&"is_best_match".to_string()) {
+        lf = lf.with_column(lit(false).alias("is_best_match"));
+    }
+
     // Ensure we have the expected columns - handle different naming conventions
     if !columns.contains(&"transact_time".to_string()) {
         // Find and rename the time column

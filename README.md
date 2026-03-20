@@ -139,6 +139,49 @@ $TRADE_DATA/
 
 Data is organized by year in Parquet files with ZSTD compression.
 
+## Binaries
+
+### `agg_kline` — Aggregate Trade Ticks to OHLCV Klines
+
+Reads aggTrades parquet files and aggregates them into OHLCV kline bars at all intervals (1m, 3m, 5m, 15m, 30m, 1h, 4h, 8h, 12h, 1d) in a single pass.
+
+#### Usage
+
+```bash
+# Using env var
+TRADE_DATA=/path/to/data cargo run --release --bin agg_kline
+
+# Using CLI arg
+cargo run --release --bin agg_kline -- --data-dir=/path/to/data
+```
+
+ETH example
+```
+cargo run --release --bin agg_kline --  -m um -s ETHUSDT        
+```
+
+#### Input
+
+Reads from: `$TRADE_DATA/binance/spot/aggTrades/{SYMBOL}/{SYMBOL}_aggTrades_{YEAR}.parquet`
+
+#### Output
+
+Writes to: `$TRADE_DATA/binance/spot/aggTrades_kline/{SYMBOL}/`
+
+| Filename pattern | Meaning |
+|------------------|---------|
+| `BTCUSDT_kline_1m_2024.parquet` | Complete year |
+| `BTCUSDT_kline_1m_2026-01-10.parquet` | Incomplete year (uses last trade date) |
+
+#### Output Columns
+
+`symbol`, `time`, `open`, `high`, `low`, `close`, `qty`, `qty_usd`, `buyer_qty`, `seller_qty`, `avg_price`, `buyer_avg_price`, `seller_avg_price`
+
+#### Notes
+
+- Incremental: skips years that already have up-to-date output files
+- Re-generates only when newer source data is detected
+
 ## Environment Variables
 
 | Variable | Description |
