@@ -29,6 +29,7 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market, data_type: CliDat
     // Parse CSV based on market type and data type
     let df = match data_type {
         CliDataType::Metrics => parse_metrics_csv(cursor)?,
+        CliDataType::FundingRate => parse_funding_rate_csv(cursor)?,
         CliDataType::AggTrades | CliDataType::Trades => match market {
             Market::Future => parse_futures_csv(cursor)?,
             Market::Spot => parse_spot_csv(cursor)?,
@@ -64,6 +65,17 @@ fn parse_metrics_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
     normalize_metrics_dataframe(df)
 }
 
+/// Parse FundingRate CSV (has header row)
+/// Columns: calc_time, funding_interval_hours, last_funding_rate
+fn parse_funding_rate_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let df = CsvReadOptions::default()
+        .with_has_header(true)
+        .into_reader_with_file_handle(cursor)
+        .finish()?;
+
+    normalize_funding_rate_dataframe(df)
+}
+
 /// Parse Spot CSV (no header row)
 fn parse_spot_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
     // Column names for spot aggTrades (no header in file)
@@ -85,6 +97,31 @@ fn parse_spot_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
         .finish()?;
 
     normalize_dataframe(df)
+}
+
+/// Normalize FundingRate DataFrame columns (convert calc_time milliseconds to datetime)
+fn normalize_funding_rate_dataframe(df: DataFrame) -> Result<DataFrame> {
+    let mut lf = df.lazy();
+
+    // calc_time is milliseconds since epoch, convert to datetime
+    lf = lf.with_column(
+        col("calc_time")
+            .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
+            .alias("time"),
+    );
+
+    // Select columns in order: time, funding_interval_hours, last_funding_rate
+    lf = lf.select([
+        col("time"),
+        col("funding_interval_hours"),
+        col("last_funding_rate"),
+    ]);
+
+    // Sort by time
+    lf = lf.sort(["time"], Default::default());
+
+    let result = lf.collect()?;
+    Ok(result)
 }
 
 /// Normalize Metrics DataFrame columns (parse create_time datetime string to time)

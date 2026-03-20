@@ -48,10 +48,17 @@ pub fn get_last_date_from_parquets(parquet_files: &[PathBuf]) -> Option<NaiveDat
             if let Ok(series) = df.column("time") {
                 if let Ok(datetime) = series.datetime() {
                     if let Some(ts) = datetime.get(0) {
-                        // ts is in microseconds
-                        let secs = ts / 1_000_000;
-                        let nsecs = ((ts % 1_000_000) * 1000) as u32;
-                        if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+                        // Auto-detect time unit based on magnitude
+                        // Milliseconds for 2020-2030: ~1.5e12 to ~1.9e12 (13 digits)
+                        // Microseconds for 2020-2030: ~1.5e15 to ~1.9e15 (16 digits)
+                        let secs = if ts > 1_000_000_000_000_000 {
+                            // Microseconds
+                            ts / 1_000_000
+                        } else {
+                            // Milliseconds
+                            ts / 1_000
+                        };
+                        if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
                             let date = dt.date_naive();
                             max_date = Some(max_date.map_or(date, |d| d.max(date)));
                         }
@@ -214,8 +221,8 @@ pub fn merge_and_write_year_parquet(
         .and_then(|s| s.datetime().ok().cloned())
         .and_then(|dt| dt.get(0))
         .and_then(|ts| {
-            // For metrics: milliseconds, for others: microseconds
-            let secs = if data_type == CliDataType::Metrics {
+            // For metrics and fundingRate: milliseconds, for others: microseconds
+            let secs = if data_type == CliDataType::Metrics || data_type == CliDataType::FundingRate {
                 ts / 1_000
             } else {
                 ts / 1_000_000
@@ -301,7 +308,7 @@ fn merge_dataframes(existing: DataFrame, new: DataFrame, data_type: CliDataType)
 
     // Use different dedup key based on data type
     let unique_key = match data_type {
-        CliDataType::Metrics => "time",
+        CliDataType::Metrics | CliDataType::FundingRate => "time",
         CliDataType::AggTrades | CliDataType::Trades => "agg_trade_id",
     };
 

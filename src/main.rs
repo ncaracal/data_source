@@ -36,6 +36,12 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
+    // Validate: fundingRate is only supported for futures market
+    if args.data_type == DataType::FundingRate && args.market == Market::Spot {
+        eprintln!("Error: fundingRate data type is not supported for spot market");
+        std::process::exit(1);
+    }
+
     // Initialize logging
     let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
     tracing_subscriber::fmt()
@@ -209,14 +215,20 @@ async fn download_phase(
     // Generate monthly download tasks (skip for metrics - no monthly archives available)
     let mut monthly_months: HashSet<(i32, u32)> = HashSet::new();
 
-    if args.data_type != DataType::Metrics {
+    // For fundingRate: only monthly available (no daily)
+    // For metrics: only daily available (no monthly)
+    // For others: prefer monthly, fall back to daily for incomplete months
+    let has_monthly = args.data_type != DataType::Metrics;
+    let has_daily = args.data_type != DataType::FundingRate;
+
+    if has_monthly {
         let monthly_dates = generate_monthly_dates(start_date, today);
 
         for date in monthly_dates {
             let year = date.year();
             let month = date.month();
 
-            // Only download monthly if month is complete
+            // Only download monthly if month is complete (or for fundingRate, always try)
             if is_month_complete(date, today) {
                 let filename = build_monthly_zip_filename(symbol, args.data_type, year, month);
 
@@ -243,32 +255,35 @@ async fn download_phase(
 
     // Generate daily download tasks
     // For metrics: download all daily files (no monthly available)
+    // For fundingRate: skip daily (only monthly available)
     // For others: only for current month or months without monthly ZIP
-    let daily_dates = generate_daily_dates(start_date, today.pred_opt().unwrap_or(today));
-    for date in daily_dates {
-        let year = date.year();
-        let month = date.month();
+    if has_daily {
+        let daily_dates = generate_daily_dates(start_date, today.pred_opt().unwrap_or(today));
+        for date in daily_dates {
+            let year = date.year();
+            let month = date.month();
 
-        // Skip if monthly ZIP exists or will be downloaded (not applicable for metrics)
-        if monthly_months.contains(&(year, month)) {
-            continue;
+            // Skip if monthly ZIP exists or will be downloaded (not applicable for metrics)
+            if monthly_months.contains(&(year, month)) {
+                continue;
+            }
+
+            let filename = build_daily_zip_filename(symbol, args.data_type, date);
+
+            if existing_files.contains(&filename) {
+                debug!("Skipping existing: {}", filename);
+                continue;
+            }
+
+            let url = build_daily_url(symbol, args.market, args.market_sub, args.data_type, date);
+            let output_path = download_folder.join(&filename);
+
+            tasks.push(DownloadTask {
+                url,
+                output_path,
+                filename,
+            });
         }
-
-        let filename = build_daily_zip_filename(symbol, args.data_type, date);
-
-        if existing_files.contains(&filename) {
-            debug!("Skipping existing: {}", filename);
-            continue;
-        }
-
-        let url = build_daily_url(symbol, args.market, args.market_sub, args.data_type, date);
-        let output_path = download_folder.join(&filename);
-
-        tasks.push(DownloadTask {
-            url,
-            output_path,
-            filename,
-        });
     }
 
     info!("Downloading {} files with concurrency {}", tasks.len(), args.concurrency);

@@ -93,6 +93,8 @@ pub enum DataType {
     Trades,
     #[value(name = "metrics", alias = "metric")]
     Metrics,
+    #[value(name = "fundingRate")]
+    FundingRate,
 }
 
 impl std::fmt::Display for DataType {
@@ -101,6 +103,7 @@ impl std::fmt::Display for DataType {
             DataType::AggTrades => write!(f, "aggTrades"),
             DataType::Trades => write!(f, "trades"),
             DataType::Metrics => write!(f, "metrics"),
+            DataType::FundingRate => write!(f, "fundingRate"),
         }
     }
 }
