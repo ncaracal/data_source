@@ -2,6 +2,25 @@
 
 A high-performance CLI tool for downloading and converting Binance market data to Parquet format.
 
+## Run
+
+```
+cargo run --release -- -s ETHUSDT -m future --market-sub um -d aggTrades
+```
+
+BVOL index
+
+```
+cargo run --release -- -s ETHBVOLUSDT -m option -d BVOLIndex
+```
+
+
+```
+  cargo run --release --bin agg_kline -- -m future --market-sub um -s BTCUSDT,ETHUSDT    
+```
+
+
+
 ## Features
 
 - Download historical trading data from Binance (spot and futures markets)

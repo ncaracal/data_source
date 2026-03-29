@@ -25,6 +25,7 @@ pub fn build_target_folder(
             path.push(data_type.to_string());
         }
         Market::Option => {
+            path.push("future");
             path.push("option");
             path.push(data_type.to_string());
         }
@@ -57,6 +58,7 @@ pub fn build_download_base(
             path.push(data_type.to_string());
         }
         Market::Option => {
+            path.push("future");
             path.push("option");
             path.push(data_type.to_string());
         }

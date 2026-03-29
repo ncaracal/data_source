@@ -1,0 +1,9 @@
+[Unit]
+Description=Run data-source-option daily at 15:00
+
+[Timer]
+OnCalendar=*-*-* 15:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

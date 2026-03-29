@@ -1,0 +1,14 @@
+[Unit]
+Description=Data Source Option - download & aggregate trade data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kat
+WorkingDirectory=/ndata/trade/data-source/data_source
+ExecStart=/ndata/trade/data-source/data_source/service/option/data-source-option-run.sh
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
