@@ -27,7 +27,7 @@ echo "--- BVOLIndex ETHBVOLUSDT ---"
 "$BIN/data_source" -s ETHBVOLUSDT -m option -d BVOLIndex
 
 echo "--- agg_kline ---"
-"$BIN/agg_kline" -m um -s BTCUSDT -s ETHUSDT
+"$BIN/agg_kline" -m um -s BTCUSDT -s ETHUSDT --kline-1s
 
 # Record last successful run
 date +%s > "$STAMP"

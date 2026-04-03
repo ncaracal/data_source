@@ -70,14 +70,19 @@ struct Args {
     /// Symbols to process (if omitted, processes all symbols found)
     #[arg(short, long)]
     symbols: Vec<String>,
+
+    /// Include 1s kline output (disabled by default due to large output size)
+    #[arg(long, default_value_t = false)]
+    kline_1s: bool,
 }
 
-// Valid tick intervals
-const VALID_INTERVALS: &[&str] = &["1m", "3m", "5m", "15m", "30m", "1h", "4h", "8h", "12h", "1d"];
+// Valid tick intervals (1s excluded by default, enabled via --kline-1s flag)
+const BASE_INTERVALS: &[&str] = &["1m", "3m", "5m", "15m", "30m", "1h", "4h", "8h", "12h", "1d"];
 
 /// Returns the Duration for each interval
 fn interval_to_duration(interval: &str) -> Duration {
     match interval {
+        "1s" => Duration::parse("1s"),
         "1m" => Duration::parse("1m"),
         "3m" => Duration::parse("3m"),
         "5m" => Duration::parse("5m"),
@@ -490,8 +495,16 @@ fn main() -> Result<()> {
 
     let base_path = PathBuf::from(&base_dir);
 
+    let intervals: Vec<&str> = if args.kline_1s {
+        let mut v = vec!["1s"];
+        v.extend_from_slice(BASE_INTERVALS);
+        v
+    } else {
+        BASE_INTERVALS.to_vec()
+    };
+
     info!("Aggregating trades to ALL intervals in one pass...");
-    info!("Market: {:?}, Intervals: {}", args.market, VALID_INTERVALS.join(", "));
+    info!("Market: {:?}, Intervals: {}", args.market, intervals.join(", "));
 
     let market_path = args.market.data_path();
 
@@ -539,7 +552,7 @@ fn main() -> Result<()> {
 
     // Process each symbol
     for symbol in &symbols {
-        match process_symbol(symbol, &source_dir, &output_dir, VALID_INTERVALS) {
+        match process_symbol(symbol, &source_dir, &output_dir, &intervals) {
             Ok(results) => {
                 all_output_files.extend(results);
             }

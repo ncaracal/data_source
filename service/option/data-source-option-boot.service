@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=kat
 WorkingDirectory=/ndata/trade/data-source/data_source
+EnvironmentFile=/ndata/trade/data-source/data_source/.env
 ExecStart=/ndata/trade/data-source/data_source/service/option/data-source-option-run.sh --boot
 TimeoutStartSec=3600
 
