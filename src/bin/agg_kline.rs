@@ -136,32 +136,36 @@ fn extract_year_from_filename(filename: &str) -> Option<i32> {
     None
 }
 
-/// Prepare the lazy frame with derived columns (computed once, used for all intervals)
+/// Prepare the lazy frame with derived columns (computed once, used for all intervals).
+///
+/// Sorted by `(time, agg_trade_id)` so that `first()` / `last()` in the OHLCV
+/// aggregation pick a deterministic trade when multiple aggTrades share the
+/// same microsecond timestamp (e.g. a taker order sweeping several maker
+/// levels within one microsecond — all get the same time but consecutive ids).
+/// Without this tiebreak, `close` could land on an arbitrary middle trade of
+/// the tie group instead of the true last trade.
 fn prepare_lazy_frame(df: DataFrame) -> LazyFrame {
-    df.lazy().with_columns([
-        // qty_usd = price * quantity
-        (col("price") * col("quantity")).alias("qty_usd"),
-        // buyer_qty = quantity when NOT is_buyer_maker
-        when(col("is_buyer_maker").not())
-            .then(col("quantity"))
-            .otherwise(lit(0.0))
-            .alias("buyer_qty"),
-        // seller_qty = quantity when is_buyer_maker
-        when(col("is_buyer_maker"))
-            .then(col("quantity"))
-            .otherwise(lit(0.0))
-            .alias("seller_qty"),
-        // buyer_qty_usd
-        when(col("is_buyer_maker").not())
-            .then(col("price") * col("quantity"))
-            .otherwise(lit(0.0))
-            .alias("buyer_qty_usd"),
-        // seller_qty_usd
-        when(col("is_buyer_maker"))
-            .then(col("price") * col("quantity"))
-            .otherwise(lit(0.0))
-            .alias("seller_qty_usd"),
-    ])
+    df.lazy()
+        .sort(["time", "agg_trade_id"], Default::default())
+        .with_columns([
+            (col("price") * col("quantity")).alias("qty_usd"),
+            when(col("is_buyer_maker").not())
+                .then(col("quantity"))
+                .otherwise(lit(0.0))
+                .alias("buyer_qty"),
+            when(col("is_buyer_maker"))
+                .then(col("quantity"))
+                .otherwise(lit(0.0))
+                .alias("seller_qty"),
+            when(col("is_buyer_maker").not())
+                .then(col("price") * col("quantity"))
+                .otherwise(lit(0.0))
+                .alias("buyer_qty_usd"),
+            when(col("is_buyer_maker"))
+                .then(col("price") * col("quantity"))
+                .otherwise(lit(0.0))
+                .alias("seller_qty_usd"),
+        ])
 }
 
 /// Aggregate trades to OHLCV bars for a given interval using group_by_dynamic
