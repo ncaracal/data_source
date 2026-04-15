@@ -3,6 +3,8 @@
 .env
 .claude/
 data/
-
+*.report
+__pycache__
 
 exchange_info_*.json
+
