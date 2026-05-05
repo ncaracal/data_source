@@ -34,6 +34,10 @@ pub struct Args {
     #[arg(long)]
     pub start_date: Option<String>,
 
+    /// End date (YYYY-MM-DD), defaults to today if not provided
+    #[arg(long)]
+    pub end_date: Option<String>,
+
     /// Max concurrent downloads
     #[arg(long, default_value = "4")]
     pub concurrency: usize,

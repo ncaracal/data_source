@@ -46,12 +46,40 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market, data_type: CliDat
     Ok(df)
 }
 
-/// Parse Futures CSV (has header row)
-fn parse_futures_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
-    let df = CsvReadOptions::default()
-        .with_has_header(true)
-        .into_reader_with_file_handle(cursor)
-        .finish()?;
+/// Parse Futures CSV.
+///
+/// Pre-April-2022 monthly archives have no header and 7 columns
+/// (agg_trade_id, price, quantity, first_trade_id, last_trade_id, transact_time, is_buyer_maker).
+/// April-2022+ archives have an 8-col header including `is_best_match`... actually
+/// the futures header has 7 cols (no is_best_match); normalize_dataframe fills it in.
+/// We detect by peeking at the first byte: digit → headerless, letter → headered.
+fn parse_futures_csv(mut cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let first_byte = cursor.get_ref().first().copied().unwrap_or(b'\n');
+    let has_header = first_byte.is_ascii_alphabetic();
+
+    cursor.set_position(0);
+
+    let df = if has_header {
+        CsvReadOptions::default()
+            .with_has_header(true)
+            .into_reader_with_file_handle(cursor)
+            .finish()?
+    } else {
+        let schema = Schema::from_iter([
+            Field::new("agg_trade_id".into(), DataType::Int64),
+            Field::new("price".into(), DataType::Float64),
+            Field::new("quantity".into(), DataType::Float64),
+            Field::new("first_trade_id".into(), DataType::Int64),
+            Field::new("last_trade_id".into(), DataType::Int64),
+            Field::new("transact_time".into(), DataType::Int64),
+            Field::new("is_buyer_maker".into(), DataType::Boolean),
+        ]);
+        CsvReadOptions::default()
+            .with_has_header(false)
+            .with_schema(Some(Arc::new(schema)))
+            .into_reader_with_file_handle(cursor)
+            .finish()?
+    };
 
     normalize_dataframe(df)
 }
@@ -161,16 +189,19 @@ fn normalize_metrics_dataframe(df: DataFrame) -> Result<DataFrame> {
         lf = lf.drop(["create_time"]);
     }
 
-    // Reorder columns: time first, then others
+    // Reorder columns and cast numeric columns to Float64.
+    // CSV type inference can pick String for these ratio columns when a file
+    // has empty/non-numeric values at the top — force Float64 so all ZIPs
+    // produce the same schema and concat works.
     lf = lf.select([
         col("time"),
         col("symbol"),
-        col("sum_open_interest"),
-        col("sum_open_interest_value"),
-        col("count_toptrader_long_short_ratio"),
-        col("sum_toptrader_long_short_ratio"),
-        col("count_long_short_ratio"),
-        col("sum_taker_long_short_vol_ratio"),
+        col("sum_open_interest").cast(DataType::Float64),
+        col("sum_open_interest_value").cast(DataType::Float64),
+        col("count_toptrader_long_short_ratio").cast(DataType::Float64),
+        col("sum_toptrader_long_short_ratio").cast(DataType::Float64),
+        col("count_long_short_ratio").cast(DataType::Float64),
+        col("sum_taker_long_short_vol_ratio").cast(DataType::Float64),
     ]);
 
     // Sort by time

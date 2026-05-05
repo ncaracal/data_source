@@ -161,18 +161,31 @@ async fn process_symbol(args: &Args, trade_data: &str, symbol: &str) -> anyhow::
 
     let today = Utc::now().date_naive();
 
+    // "cutoff" is the first day whose archive is NOT yet available.
+    // - When --end-date is given: cutoff = end_date + 1 (end_date itself is historical, archive ready).
+    // - Otherwise: cutoff = today (Binance releases today's daily archive the next day).
+    // This is what downstream code treats as "today" for is_month_complete / daily-range checks.
+    let cutoff = if let Some(ref date_str) = args.end_date {
+        let end_date = utils::date::parse_date(date_str)
+            .ok_or_else(|| anyhow::anyhow!("Invalid end date format: {}", date_str))?
+            .min(today);
+        end_date.succ_opt().unwrap_or(today)
+    } else {
+        today
+    };
+
     // Determine start date
     let start_date = determine_start_date(args, &target_folder, symbol)?;
-    info!("Start date: {}", start_date);
+    info!("Start date: {}, End (exclusive): {}", start_date, cutoff);
 
     // Download phase
     if !args.convert_only {
-        download_phase(args, &download_folder, symbol, start_date, today).await?;
+        download_phase(args, &download_folder, symbol, start_date, cutoff).await?;
     }
 
     // Convert phase
     if !args.download_only {
-        convert_phase(args, &download_folder, &target_folder, symbol, start_date, today)?;
+        convert_phase(args, &download_folder, &target_folder, symbol, start_date, cutoff)?;
     }
 
     Ok(())

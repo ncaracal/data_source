@@ -400,6 +400,8 @@ def main() -> int:
 
     out = write_report(all_syms, results)
     print(f"wrote {out}")
+    print()
+    print(out.read_text(), end="")
 
     bad = (
         any(row.gap_count != 0 or row.note
