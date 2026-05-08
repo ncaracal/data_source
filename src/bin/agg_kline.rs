@@ -63,6 +63,10 @@ struct Args {
     #[arg(long, env = "TRADE_DATA")]
     data_dir: Option<String>,
 
+    /// Exchange name (binance or gate)
+    #[arg(short, long, default_value = "binance")]
+    exchange: String,
+
     /// Market type
     #[arg(short, long, value_enum, default_value = "spot")]
     market: MarketEnum,
@@ -508,12 +512,17 @@ fn main() -> Result<()> {
     };
 
     info!("Aggregating trades to ALL intervals in one pass...");
-    info!("Market: {:?}, Intervals: {}", args.market, intervals.join(", "));
+    info!(
+        "Exchange: {}, Market: {:?}, Intervals: {}",
+        args.exchange,
+        args.market,
+        intervals.join(", ")
+    );
 
     let market_path = args.market.data_path();
 
     // Source directory with aggTrades data
-    let source_dir = base_path.join("binance").join(&market_path).join("aggTrades");
+    let source_dir = base_path.join(&args.exchange).join(&market_path).join("aggTrades");
 
     if !source_dir.exists() {
         anyhow::bail!("Source folder not found: {:?}", source_dir);
@@ -521,7 +530,7 @@ fn main() -> Result<()> {
 
     // Output directory
     let output_dir = base_path
-        .join("binance")
+        .join(&args.exchange)
         .join(&market_path)
         .join("aggTrades_kline");
     fs::create_dir_all(&output_dir)?;

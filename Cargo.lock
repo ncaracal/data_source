@@ -588,6 +588,7 @@ dependencies = [
  "chrono",
  "clap",
  "dotenvy",
+ "flate2",
  "futures",
  "polars",
  "rayon",

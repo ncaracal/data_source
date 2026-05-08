@@ -9,3 +9,5 @@ __pycache__
 exchange_info_*.json
 
 .last_run
+*.log
+python/_run/

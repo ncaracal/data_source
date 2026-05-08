@@ -21,6 +21,25 @@ cargo run --release -- -s ETHBVOLUSDT -m option -d BVOLIndex
 
 
 
+## BUSDT example (260505)
+
+um aggTrades
+```
+cargo run --release -- -s BUSDT -m future --market-sub um -d aggTrades
+```
+
+kline
+```
+cargo run --release --bin agg_kline -- -m um -s BUSDT
+```
+
+verify
+```
+python3 python/verify_self.py -s BUSDT
+```
+
+
+
 ## Features
 
 - Download historical trading data from Binance (spot and futures markets)

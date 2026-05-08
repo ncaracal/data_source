@@ -41,11 +41,18 @@ TRADE_DATA = Path(os.environ.get("TRADE_DATA", "/ndata/trade/data"))
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REPORT_DIR = REPO_ROOT / "report" / "verify_self"
 
-# Markets to scan: (label, path under $TRADE_DATA that holds
-# "aggTrades/{sym}/" and "aggTrades_kline/{sym}/" subtrees).
-MARKETS: list[tuple[str, Path]] = [
-    ("future_um", Path("binance/future/um")),
-    ("spot", Path("binance/spot")),
+# Markets to scan. Each entry is `(label, path, id_continuity)`.
+# - `path` is under $TRADE_DATA and holds `aggTrades/{sym}/` +
+#   `aggTrades_kline/{sym}/` subtrees.
+# - `id_continuity` controls the per-file gap-count check and the
+#   between-file `last_id+1 == next first_id` check. Gate's spot trade
+#   ids are NOT globally monotonic — they observably reset (for B_USDT
+#   on 2025-06-05) — so disable id-continuity for that market.
+MARKETS: list[tuple[str, Path, bool]] = [
+    ("future_um", Path("binance/future/um"), True),
+    ("spot",      Path("binance/spot"),      True),
+    ("gate_spot", Path("gate/spot"),         False),
+    ("gate_um",   Path("gate/future/um"),    False),
 ]
 
 INTERVAL_SECONDS: dict[str, int] = {
@@ -100,12 +107,27 @@ class SymbolResult:
     errors: list[str] = field(default_factory=list)
 
 
-def expected_kline_rows(year: int, md: str | None, interval: str) -> int:
+def expected_kline_rows(
+    year: int, md: str | None, interval: str,
+    start_md: tuple[int, int] | None = None,
+) -> int:
+    """Theoretical bar count for the date range covered by a kline file.
+
+    `md` is the YYYY-MM-DD trailing tag in the filename (None for full year).
+    `start_md` is the actual first day's `(month, day)` from the parquet's
+    `time` column — used when the symbol was listed mid-year, otherwise we
+    assume coverage starts on Jan 1.
+    """
+    if start_md is None:
+        start_date = date(year, 1, 1)
+    else:
+        start_date = date(year, start_md[0], start_md[1])
     if md is None:
-        days = 366 if isleap(year) else 365
+        end_date = date(year, 12, 31)
     else:
         mm, dd = (int(x) for x in md.split("-"))
-        days = (date(year, mm, dd) - date(year, 1, 1)).days + 1
+        end_date = date(year, mm, dd)
+    days = (end_date - start_date).days + 1
     return days * (86400 // INTERVAL_SECONDS[interval])
 
 
@@ -118,6 +140,27 @@ def _folder(path: Path) -> str:
         return str(path.parent.relative_to(TRADE_DATA)) + "/"
     except ValueError:
         return str(path.parent) + "/"
+
+
+def _kline_min_md(path: Path) -> tuple[int, int] | None:
+    """Read `(month, day)` of the earliest bar in a kline parquet, via
+    row-group statistics on the `time` column. Returns None if unavailable."""
+    try:
+        pf = pq.ParquetFile(path)
+        col_idx = pf.schema_arrow.get_field_index("time")
+        if col_idx < 0:
+            return None
+        meta = pf.metadata
+        if meta is None or meta.num_row_groups == 0:
+            return None
+        stats = meta.row_group(0).column(col_idx).statistics
+        if stats is None or not stats.has_min_max:
+            return None
+        ts = pq.read_table(path, columns=["time"]).column("time")[0].as_py()
+        # `ts` is datetime; some parquet writers store stats as datetime too.
+        return (ts.month, ts.day)
+    except Exception:
+        return None
 
 
 def check_kline(path: Path) -> KlineRow:
@@ -134,18 +177,30 @@ def check_kline(path: Path) -> KlineRow:
     except Exception as e:
         return KlineRow(_label(path), interval, 0, 0, 0,
                         f"read error: {type(e).__name__}")
-    exp = expected_kline_rows(year, md, interval)
+    start_md = _kline_min_md(path)
+    exp = expected_kline_rows(year, md, interval, start_md=start_md)
     diff = count - exp
     note = ""
-    # 1s kline is derived from aggTrades; seconds with no trade produce no
-    # row, so fewer rows than the theoretical max is expected and not an
-    # error.
-    if interval == "1s" and diff < 0:
-        note = "sparse (no-trade seconds)"
+    # Klines are derived from aggTrades — intervals with no trade produce no
+    # bar, so `count < expected` is expected for any low-volume symbol or
+    # short interval (1s, 1m on illiquid pairs). Only treat `count > expected`
+    # as a real error (duplicate/extra bars).
+    if diff < 0:
+        note = "sparse (no-trade intervals)"
     return KlineRow(_label(path), interval, exp, count, diff, note)
 
 
-def check_aggtrades(path: Path) -> AggRow:
+def check_aggtrades(path: Path, id_continuity: bool = True) -> AggRow:
+    """Inspect an aggTrades parquet.
+
+    When ``id_continuity`` is True (binance) we expect monotonic, gap-free
+    `agg_trade_id` values: count == max - min + 1.
+
+    When False (gate, whose ids reset mid-history) we instead check that
+    ids are unique within the file. The reported `start_id` / `end_id` are
+    still the parquet stats (min/max) but `gap_count` reports DUPLICATES
+    rather than missing ids.
+    """
     try:
         pf = pq.ParquetFile(path)
         meta = pf.metadata
@@ -174,6 +229,20 @@ def check_aggtrades(path: Path) -> AggRow:
 
     if first_id is None or last_id is None:
         return AggRow(_label(path), 0, 0, 0, note="empty file")
+
+    if not id_continuity:
+        # Gate: just verify uniqueness — ids are not contiguous and may even
+        # decrease across the reset boundary.
+        ids = pq.read_table(path, columns=["agg_trade_id"]) \
+                .column("agg_trade_id") \
+                .to_numpy(zero_copy_only=False)
+        unique = np.unique(ids).size
+        dups = count - unique
+        if dups == 0:
+            return AggRow(_label(path), first_id, last_id, 0,
+                          note="ids non-monotonic (skipped continuity check)")
+        return AggRow(_label(path), first_id, last_id, dups,
+                      note=f"{dups} duplicate id(s)")
 
     gap_count = (last_id - first_id + 1) - count
     if gap_count == 0:
@@ -213,7 +282,8 @@ def check_aggtrades(path: Path) -> AggRow:
     return AggRow(_label(path), first_id, last_id, gap_count, gaps)
 
 
-def check_symbol(market: str, market_root: Path, symbol: str) -> SymbolResult:
+def check_symbol(market: str, market_root: Path, symbol: str,
+                 id_continuity: bool = True) -> SymbolResult:
     res = SymbolResult(symbol=symbol, market=market)
 
     agg_dir = market_root / "aggTrades" / symbol
@@ -222,19 +292,20 @@ def check_symbol(market: str, market_root: Path, symbol: str) -> SymbolResult:
         if agg_files:
             res.folders.append(_folder(agg_files[0]))
         for f in agg_files:
-            res.agg_rows.append(check_aggtrades(f))
+            res.agg_rows.append(check_aggtrades(f, id_continuity=id_continuity))
 
-        for i in range(1, len(res.agg_rows)):
-            prev = res.agg_rows[i - 1]
-            cur = res.agg_rows[i]
-            if prev.note or cur.note:
-                continue
-            if cur.start_id != prev.end_id + 1:
-                delta = cur.start_id - prev.end_id - 1
-                res.errors.append(
-                    f"agg_id gap between {prev.name} (end={prev.end_id}) "
-                    f"and {cur.name} (start={cur.start_id}): missing={delta}"
-                )
+        if id_continuity:
+            for i in range(1, len(res.agg_rows)):
+                prev = res.agg_rows[i - 1]
+                cur = res.agg_rows[i]
+                if prev.note or cur.note:
+                    continue
+                if cur.start_id != prev.end_id + 1:
+                    delta = cur.start_id - prev.end_id - 1
+                    res.errors.append(
+                        f"agg_id gap between {prev.name} (end={prev.end_id}) "
+                        f"and {cur.name} (start={cur.start_id}): missing={delta}"
+                    )
 
     kline_dir = market_root / "aggTrades_kline" / symbol
     if kline_dir.is_dir():
@@ -253,7 +324,7 @@ def check_symbol(market: str, market_root: Path, symbol: str) -> SymbolResult:
 
 def discover_symbols() -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
-    for market, sub in MARKETS:
+    for market, sub, _id_cont in MARKETS:
         root = TRADE_DATA / sub
         syms: set[str] = set()
         for kind in ("aggTrades", "aggTrades_kline"):
@@ -276,16 +347,22 @@ def _render_agg_table(rows: list[AggRow]) -> list[str]:
     sep = "-" * len(header)
     out = ["[aggTrades]", header, sep]
     for r in rows:
-        if r.note:
-            out.append(f"{r.name:<{name_w}}  {'':>14}  {'':>14}  "
-                       f"{'':>12}  {r.note}")
-            continue
-        out.append(
-            f"{r.name:<{name_w}}  {r.start_id:>14}  "
-            f"{r.end_id:>14}  {r.gap_count:>12}"
-        )
-        for prev, nxt, miss in r.gaps:
-            out.append(f"    gap: {prev} -> {nxt} (missing {miss})")
+        # A row has valid id stats whenever check_aggtrades populated them;
+        # only blank the numeric columns for fatal notes where the file
+        # couldn't be inspected at all (start_id=end_id=0 sentinel).
+        has_ids = not (r.start_id == 0 and r.end_id == 0)
+        note_suffix = f"  {r.note}" if r.note else ""
+        if has_ids:
+            out.append(
+                f"{r.name:<{name_w}}  {r.start_id:>14}  "
+                f"{r.end_id:>14}  {r.gap_count:>12}{note_suffix}"
+            )
+            for prev, nxt, miss in r.gaps:
+                out.append(f"    gap: {prev} -> {nxt} (missing {miss})")
+        else:
+            out.append(
+                f"{r.name:<{name_w}}  {'':>14}  {'':>14}  {'':>12}{note_suffix}"
+            )
     return out
 
 
@@ -321,7 +398,8 @@ def write_report(symbols: list[str], results: list[SymbolResult]) -> Path:
     )
     bad_agg = sum(
         1 for r in results for row in r.agg_rows
-        if row.gap_count != 0 or row.note
+        if (row.gap_count != 0 or row.note)
+        and not row.note.startswith("ids non-monotonic")
     )
     bad_kline = sum(
         1 for r in results for row in r.kline_rows
@@ -392,11 +470,13 @@ def main() -> int:
 
     results: list[SymbolResult] = []
     for sym in all_syms:
-        for market, sub in MARKETS:
+        for market, sub, id_cont in MARKETS:
             if sym in by_market.get(market, set()):
                 if args.verbose:
                     print(f"checking {sym} [{market}]", file=sys.stderr)
-                results.append(check_symbol(market, TRADE_DATA / sub, sym))
+                results.append(check_symbol(
+                    market, TRADE_DATA / sub, sym, id_continuity=id_cont
+                ))
 
     out = write_report(all_syms, results)
     print(f"wrote {out}")
@@ -404,7 +484,8 @@ def main() -> int:
     print(out.read_text(), end="")
 
     bad = (
-        any(row.gap_count != 0 or row.note
+        any((row.gap_count != 0 or row.note)
+            and not row.note.startswith("ids non-monotonic")
             for r in results for row in r.agg_rows)
         or any((row.diff != 0 or row.note)
                and not row.note.startswith("sparse")

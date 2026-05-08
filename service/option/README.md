@@ -1,6 +1,6 @@
 # data-source-option service
 
-Systemd service that downloads and aggregates Binance trade data daily at 15:00.
+Systemd service that downloads and aggregates Binance trade data daily at 16:00.
 
 ## Jobs
 
