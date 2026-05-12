@@ -24,20 +24,22 @@ REPORT="$REPORT_DIR/$(date -u +%F).report"
 
 echo "=== $(date) Starting data-source jobs ==="
 
-echo "--- aggTrades future/um BTCUSDT ETHUSDT ---"
-"$BIN/data_source" -s BTCUSDT ETHUSDT -m future --market-sub um -d aggTrades
-
 echo "--- aggTrades spot BTCUSDT ETHUSDT ---"
 "$BIN/data_source" -s BTCUSDT ETHUSDT -m spot -d aggTrades
 
 echo "--- BVOLIndex ETHBVOLUSDT ---"
 "$BIN/data_source" -s ETHBVOLUSDT -m option -d BVOLIndex
 
-echo "--- agg_kline future/um ---"
-"$BIN/agg_kline" -m um -s BTCUSDT -s ETHUSDT --kline-1s
-
 echo "--- agg_kline spot ---"
 "$BIN/agg_kline" -m spot -s BTCUSDT -s ETHUSDT --kline-1s
+
+echo "--- altcoin download + verify spot (non-fatal) ---"
+"$PY" python/altcoin_symbols_download_and_verify.py --exchange binance --market spot || \
+    echo "WARN: altcoin spot download/verify returned non-zero — continuing"
+
+echo "--- altcoin -> kline spot (non-fatal) ---"
+"$PY" python/altcoin_symbols_to_kline.py --exchange binance --market spot || \
+    echo "WARN: altcoin spot kline returned non-zero — continuing"
 
 echo "--- verify (informational; non-fatal) ---"
 {
@@ -45,9 +47,6 @@ echo "--- verify (informational; non-fatal) ---"
     echo
     echo "----- spot BTCUSDT ETHUSDT -----"
     "$PY" python/verify_with_binance_kline_api_last_day.py -s BTCUSDT ETHUSDT -m spot 2>&1 || true
-    echo
-    echo "----- future/um BTCUSDT ETHUSDT -----"
-    "$PY" python/verify_with_binance_kline_api_last_day.py -s BTCUSDT ETHUSDT -m future --market-sub um 2>&1 || true
 } >> "$REPORT"
 echo "verify output appended to $REPORT"
 

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""download_altcoin_symbols_and_verify.py
+"""altcoin_symbols_download_and_verify.py
 
 End-to-end altcoin pipeline for one (exchange, market):
 
   1. Refresh the latest exchange_info JSON from the exchange.
   2. Pick every TRADING USDT-quoted symbol minus the major-coin "except"
-     list (``download_altcoin_symbols_and_verify_except.json``) and run
-     the Rust ``data_source`` CLI to download / convert them to parquet.
+     list (``altcoin_symbols_except.json``) and run the Rust
+     ``data_source`` CLI to download / convert them to parquet.
      Cargo's own progress output is streamed live and tee'd to the log.
   3. Call ``verify_all_symbols_id.run(...)`` to verify id continuity over
      every parquet now on disk.
 
 Stdout / stderr are mirrored into
-``report/running_log/download_altcoin_symbols_and_verify.{UTC}.log``.
+``report/running_log/altcoin_symbols_download_and_verify.{UTC}.log``.
 
 Usage:
-    python download_altcoin_symbols_and_verify.py --exchange binance --market spot
-    python download_altcoin_symbols_and_verify.py --exchange binance --market um
+    python altcoin_symbols_download_and_verify.py --exchange binance --market spot
+    python altcoin_symbols_download_and_verify.py --exchange binance --market um
 """
 
 from __future__ import annotations
@@ -40,8 +40,7 @@ import verify_all_symbols_id as verifier  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TRADE_DATA = Path(os.environ.get("TRADE_DATA", "/ndata/trade/data"))
 LOG_DIR = REPO_ROOT / "report" / "running_log"
-EXCEPT_JSON = Path(__file__).resolve().parent \
-    / "download_altcoin_symbols_and_verify_except.json"
+EXCEPT_JSON = Path(__file__).resolve().parent / "altcoin_symbols_except.json"
 
 # (exchange, market) -> (info URL, on-disk JSON path)
 EXCHANGE_INFO: dict[tuple[str, str], tuple[str, Path]] = {
@@ -81,7 +80,7 @@ class _Tee:
 def setup_logging() -> tuple[Path, "object"]:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(ZoneInfo("UTC")).strftime("%Y%m%d_%H%M%S")
-    log_path = LOG_DIR / f"download_altcoin_symbols_and_verify.{stamp}.log"
+    log_path = LOG_DIR / f"altcoin_symbols_download_and_verify.{stamp}.log"
     log_file = open(log_path, "w", buffering=1, encoding="utf-8")
     sys.stdout = _Tee(sys.__stdout__, log_file)
     sys.stderr = _Tee(sys.__stderr__, log_file)

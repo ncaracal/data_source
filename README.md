@@ -39,6 +39,14 @@ python3 python/verify_self.py -s BUSDT
 ```
 
 
+## download all altcoins 
+
+```
+python python/download_altcoin_symbols_and_verify.py --exchange binance --market spot
+```
+
+exception at 
+download_altcoin_symbols_and_verify_except.json 
 
 ## Features
 
