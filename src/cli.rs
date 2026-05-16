@@ -103,6 +103,9 @@ pub enum DataType {
     FundingRate,
     #[value(name = "BVOLIndex")]
     BVOLIndex,
+    /// Cross-margin daily interest rate history (Binance signed API, asset-based)
+    #[value(name = "marginInterestRate", alias = "marginInterest")]
+    MarginInterestRate,
 }
 
 impl std::fmt::Display for DataType {
@@ -113,6 +116,7 @@ impl std::fmt::Display for DataType {
             DataType::Metrics => write!(f, "metrics"),
             DataType::FundingRate => write!(f, "fundingRate"),
             DataType::BVOLIndex => write!(f, "BVOLIndex"),
+            DataType::MarginInterestRate => write!(f, "marginInterestRate"),
         }
     }
 }

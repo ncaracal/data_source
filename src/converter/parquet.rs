@@ -311,6 +311,7 @@ fn merge_dataframes(existing: DataFrame, new: DataFrame, data_type: CliDataType)
         CliDataType::Metrics | CliDataType::FundingRate | CliDataType::BVOLIndex => "time",
         CliDataType::AggTrades => "agg_trade_id",
         CliDataType::Trades => "trade_id",
+        CliDataType::MarginInterestRate => "time",
     };
 
     // Remove duplicates and sort by time

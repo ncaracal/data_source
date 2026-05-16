@@ -39,6 +39,11 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market, data_type: CliDat
             Market::Future => parse_futures_trades_csv(cursor)?,
             Market::Spot | Market::Option => parse_spot_trades_csv(cursor)?,
         },
+        CliDataType::MarginInterestRate => {
+            return Err(AppError::Parse(
+                "marginInterestRate is fetched via signed API, not ZIP conversion".to_string(),
+            ))
+        }
     };
 
     info!(
@@ -386,15 +391,19 @@ fn normalize_dataframe(df: DataFrame) -> Result<DataFrame> {
     // Add ts column (timestamp in microseconds)
     lf = lf.with_column(ts_microseconds.alias("ts"));
 
-    // Select and order columns
+    // Select and order columns. Force numeric dtypes explicitly: headered
+    // archives rely on CSV type inference, which types `quantity`/`price` as
+    // Int64 in months where every value is a whole number and Float64
+    // otherwise. Without these casts, concatenating such years fails with
+    // "'concat' inputs should all have the same schema".
     let result = lf
         .select([
-            col("agg_trade_id"),
+            col("agg_trade_id").cast(DataType::Int64),
             col("time"),
-            col("price"),
-            col("quantity"),
-            col("first_trade_id"),
-            col("last_trade_id"),
+            col("price").cast(DataType::Float64),
+            col("quantity").cast(DataType::Float64),
+            col("first_trade_id").cast(DataType::Int64),
+            col("last_trade_id").cast(DataType::Int64),
             col("is_buyer_maker"),
             col("is_best_match"),
             col("ts"),

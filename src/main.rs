@@ -55,6 +55,18 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
+    // Validate: marginInterestRate is Binance spot-only (asset-based signed API)
+    if args.data_type == DataType::MarginInterestRate {
+        if args.exchange.to_lowercase() != "binance" {
+            eprintln!("Error: marginInterestRate is only supported for -e binance");
+            std::process::exit(1);
+        }
+        if args.market != Market::Spot {
+            eprintln!("Error: marginInterestRate is only supported for -m spot (cross-margin)");
+            std::process::exit(1);
+        }
+    }
+
     // Initialize logging
     let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
     tracing_subscriber::fmt()
@@ -127,7 +139,9 @@ async fn main() -> anyhow::Result<()> {
     for (i, symbol) in symbols.iter().enumerate() {
         info!("--------- Processing symbol: {} ({}/{}) ---------", symbol, i + 1, total);
 
-        let result = if exchange_lower == "gate" {
+        let result = if args.data_type == DataType::MarginInterestRate {
+            process_symbol_margin_interest(&args, &trade_data, symbol).await
+        } else if exchange_lower == "gate" {
             process_symbol_gate(&args, &trade_data, symbol).await
         } else {
             process_symbol(&args, &trade_data, symbol).await
@@ -500,6 +514,122 @@ fn convert_phase(
     }
 
     info!("Conversion complete");
+
+    Ok(())
+}
+
+// ============================================================================
+// Binance cross-margin interest-rate history flow
+// ============================================================================
+//
+// `symbol` here is interpreted as a margin *asset* (e.g. STORJ). Data is pulled
+// from the signed `/sapi/v1/margin/interestRateHistory` endpoint and written as
+// both parquet and CSV under the standard target folder:
+//   $TRADE_DATA/binance/spot/marginInterestRate/{ASSET}/{ASSET}_marginInterestRate_all.{parquet,csv}
+
+async fn process_symbol_margin_interest(
+    args: &Args,
+    trade_data: &str,
+    asset: &str,
+) -> anyhow::Result<()> {
+    use polars::prelude::*;
+
+    let target_folder = build_target_folder(
+        trade_data,
+        &args.exchange,
+        args.market,
+        args.market_sub,
+        args.data_type,
+        asset,
+    );
+    std::fs::create_dir_all(&target_folder)?;
+
+    info!("Fetching cross-margin interest-rate history for asset: {}", asset);
+    let rows = exchange::binance::margin::fetch_interest_rate_history(asset).await?;
+
+    if rows.is_empty() {
+        warn!(
+            "No interest-rate history returned for `{}` (asset may not be cross-margin tradable, \
+             or is outside Binance's ~6-month retention window)",
+            asset
+        );
+        return Ok(());
+    }
+
+    // Optional date filtering via --start-date / --end-date (inclusive).
+    let start_ms = args
+        .start_date
+        .as_deref()
+        .and_then(utils::date::parse_date)
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| dt.and_utc().timestamp_millis());
+    let end_ms = args
+        .end_date
+        .as_deref()
+        .and_then(utils::date::parse_date)
+        .and_then(|d| d.and_hms_opt(23, 59, 59))
+        .map(|dt| dt.and_utc().timestamp_millis());
+
+    let filtered: Vec<_> = rows
+        .into_iter()
+        .filter(|r| start_ms.map_or(true, |s| r.timestamp >= s))
+        .filter(|r| end_ms.map_or(true, |e| r.timestamp <= e))
+        .collect();
+
+    if filtered.is_empty() {
+        warn!("All {} samples filtered out by --start-date/--end-date", asset);
+        return Ok(());
+    }
+
+    let assets: Vec<&str> = filtered.iter().map(|r| r.asset.as_str()).collect();
+    let ts: Vec<i64> = filtered.iter().map(|r| r.timestamp).collect();
+    let rates: Vec<f64> = filtered
+        .iter()
+        .map(|r| r.daily_interest_rate.parse::<f64>().unwrap_or(f64::NAN))
+        .collect();
+    let vip: Vec<i64> = filtered.iter().map(|r| r.vip_level).collect();
+    let datetimes: Vec<String> = filtered
+        .iter()
+        .map(|r| {
+            chrono::DateTime::from_timestamp_millis(r.timestamp)
+                .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+
+    let mut df = DataFrame::new(vec![
+        Column::new("asset".into(), assets),
+        Column::new("timestamp".into(), ts),
+        Column::new("datetime".into(), datetimes),
+        Column::new("daily_interest_rate".into(), rates),
+        Column::new("vip_level".into(), vip),
+    ])?;
+
+    let parquet_path = target_folder.join(format!("{}_marginInterestRate_all.parquet", asset));
+    let csv_path = target_folder.join(format!("{}_marginInterestRate_all.csv", asset));
+
+    let pf = std::fs::File::create(&parquet_path)?;
+    ParquetWriter::new(pf)
+        .with_compression(ParquetCompression::Zstd(None))
+        .finish(&mut df)?;
+    let cf = std::fs::File::create(&csv_path)?;
+    CsvWriter::new(cf).finish(&mut df)?;
+
+    let first = filtered.first().unwrap();
+    let last = filtered.last().unwrap();
+    info!(
+        "{}: wrote {} samples ({}  ..  {}) -> {:?}",
+        asset,
+        df.height(),
+        chrono::DateTime::from_timestamp_millis(first.timestamp)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default(),
+        chrono::DateTime::from_timestamp_millis(last.timestamp)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default(),
+        parquet_path
+    );
+    info!("{}: CSV mirror at {:?}", asset, csv_path);
 
     Ok(())
 }
