@@ -309,7 +309,8 @@ fn merge_dataframes(existing: DataFrame, new: DataFrame, data_type: CliDataType)
     // Use different dedup key based on data type
     let unique_key = match data_type {
         CliDataType::Metrics | CliDataType::FundingRate | CliDataType::BVOLIndex => "time",
-        CliDataType::AggTrades | CliDataType::Trades => "agg_trade_id",
+        CliDataType::AggTrades => "agg_trade_id",
+        CliDataType::Trades => "trade_id",
     };
 
     // Remove duplicates and sort by time

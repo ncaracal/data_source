@@ -31,9 +31,13 @@ pub fn parse_zip_to_dataframe(zip_path: &Path, market: Market, data_type: CliDat
         CliDataType::Metrics => parse_metrics_csv(cursor)?,
         CliDataType::FundingRate => parse_funding_rate_csv(cursor)?,
         CliDataType::BVOLIndex => parse_bvol_index_csv(cursor)?,
-        CliDataType::AggTrades | CliDataType::Trades => match market {
+        CliDataType::AggTrades => match market {
             Market::Future => parse_futures_csv(cursor)?,
             Market::Spot | Market::Option => parse_spot_csv(cursor)?,
+        },
+        CliDataType::Trades => match market {
+            Market::Future => parse_futures_trades_csv(cursor)?,
+            Market::Spot | Market::Option => parse_spot_trades_csv(cursor)?,
         },
     };
 
@@ -139,6 +143,65 @@ fn parse_spot_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
     normalize_dataframe(df)
 }
 
+/// Parse Spot `trades` CSV. Spot trade archives are always headerless and
+/// carry 7 columns: id, price, qty, quote_qty, time, is_buyer_maker,
+/// is_best_match. The `time` column is milliseconds in older files
+/// (pre-2025) and microseconds in newer ones — normalize_trades_dataframe
+/// handles both.
+fn parse_spot_trades_csv(cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let schema = Schema::from_iter([
+        Field::new("id".into(), DataType::Int64),
+        Field::new("price".into(), DataType::Float64),
+        Field::new("qty".into(), DataType::Float64),
+        Field::new("quote_qty".into(), DataType::Float64),
+        Field::new("time".into(), DataType::Int64),
+        Field::new("is_buyer_maker".into(), DataType::Boolean),
+        Field::new("is_best_match".into(), DataType::Boolean),
+    ]);
+
+    let df = CsvReadOptions::default()
+        .with_has_header(false)
+        .with_schema(Some(Arc::new(schema)))
+        .into_reader_with_file_handle(cursor)
+        .finish()?;
+
+    normalize_trades_dataframe(df)
+}
+
+/// Parse Futures `trades` CSV. Futures archives always include a header row
+/// with 6 columns (no `is_best_match`): id, price, qty, quote_qty, time,
+/// is_buyer_maker. `time` is milliseconds. is_best_match is filled with
+/// `false` for schema parity with spot.
+fn parse_futures_trades_csv(mut cursor: Cursor<Vec<u8>>) -> Result<DataFrame> {
+    let first_byte = cursor.get_ref().first().copied().unwrap_or(b'\n');
+    let has_header = first_byte.is_ascii_alphabetic();
+
+    cursor.set_position(0);
+
+    let df = if has_header {
+        CsvReadOptions::default()
+            .with_has_header(true)
+            .into_reader_with_file_handle(cursor)
+            .finish()?
+    } else {
+        let schema = Schema::from_iter([
+            Field::new("id".into(), DataType::Int64),
+            Field::new("price".into(), DataType::Float64),
+            Field::new("qty".into(), DataType::Float64),
+            Field::new("quote_qty".into(), DataType::Float64),
+            Field::new("time".into(), DataType::Int64),
+            Field::new("is_buyer_maker".into(), DataType::Boolean),
+        ]);
+        CsvReadOptions::default()
+            .with_has_header(false)
+            .with_schema(Some(Arc::new(schema)))
+            .into_reader_with_file_handle(cursor)
+            .finish()?
+    };
+
+    normalize_trades_dataframe(df)
+}
+
 /// Normalize FundingRate DataFrame columns (convert calc_time milliseconds to datetime)
 fn normalize_funding_rate_dataframe(df: DataFrame) -> Result<DataFrame> {
     let mut lf = df.lazy();
@@ -235,6 +298,50 @@ fn normalize_bvol_index_dataframe(df: DataFrame) -> Result<DataFrame> {
     lf = lf.sort(["time"], Default::default());
 
     let result = lf.collect()?;
+    Ok(result)
+}
+
+/// Normalize a Binance `trades` DataFrame into the canonical output schema:
+/// `trade_id, time, price, quantity, quote_qty, is_buyer_maker, is_best_match, ts`.
+///
+/// Handles both the spot variant (has `is_best_match`, time may be ms or us
+/// depending on the era) and the futures variant (no `is_best_match`, ms).
+fn normalize_trades_dataframe(df: DataFrame) -> Result<DataFrame> {
+    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+
+    let mut lf = df.lazy();
+
+    // Futures lacks is_best_match; fill it with false so the schema lines
+    // up with spot output.
+    if !columns.contains(&"is_best_match".to_string()) {
+        lf = lf.with_column(lit(false).alias("is_best_match"));
+    }
+
+    // Auto-detect time unit: > 1e14 → already microseconds; otherwise ms.
+    let ts_microseconds = when(col("time").gt(lit(1_000_000_000_000_000i64)))
+        .then(col("time"))
+        .otherwise(col("time") * lit(1000i64));
+
+    lf = lf.with_column(ts_microseconds.clone().alias("ts"));
+    lf = lf.with_column(
+        ts_microseconds
+            .cast(DataType::Datetime(TimeUnit::Microseconds, None))
+            .alias("time_dt"),
+    );
+
+    let result = lf
+        .select([
+            col("id").alias("trade_id"),
+            col("time_dt").alias("time"),
+            col("price"),
+            col("qty").alias("quantity"),
+            col("quote_qty"),
+            col("is_buyer_maker"),
+            col("is_best_match"),
+            col("ts"),
+        ])
+        .collect()?;
+
     Ok(result)
 }
 
