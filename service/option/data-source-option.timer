@@ -1,8 +1,8 @@
 [Unit]
-Description=Run data-source-option daily at 15:00
+Description=Run data-source-option daily at 09:00 UTC
 
 [Timer]
-OnCalendar=*-*-* 08:00:00 UTC
+OnCalendar=*-*-* 09:00:00 UTC
 Persistent=true
 
 [Install]

@@ -196,17 +196,35 @@ pub fn merge_and_write_year_parquet(
         }
     }
 
-    // Merge with existing data (only deduplicate when merging with existing)
-    let merged_df = if let Some(ref existing) = existing_path {
+    // Dedup key per data type (same key used when merging with existing data).
+    let unique_key = match data_type {
+        CliDataType::Metrics | CliDataType::FundingRate | CliDataType::BVOLIndex => "time",
+        CliDataType::AggTrades => "agg_trade_id",
+        CliDataType::Trades => "trade_id",
+        CliDataType::MarginInterestRate => "time",
+    };
+
+    // Merge with existing data, then deduplicate.
+    //
+    // Dedup is applied even for fresh data (no existing parquet): Binance's
+    // source aggTrades archives are NOT duplicate-free — monthly archives
+    // overlap at month boundaries and occasionally repeat rows, so a
+    // first-time full download will contain duplicate `agg_trade_id`s unless
+    // we dedup here. Skipping this previously produced negative "gap_count"
+    // (rows > id-span) in verify_all_symbols_id for freshly downloaded
+    // symbols (e.g. PUMPUSDT, STORJUSDT 2022).
+    let combined = if let Some(ref existing) = existing_path {
         let existing_df = LazyFrame::scan_parquet(existing, Default::default())?
             .collect()?;
-        merge_dataframes(existing_df, combined, data_type)?
+        existing_df.vstack(&combined)?
     } else {
-        // Fresh data: just sort by time (no duplicates expected from different ZIP files)
-        combined.lazy()
-            .sort(["time"], Default::default())
-            .collect()?
+        combined
     };
+    let merged_df = combined
+        .lazy()
+        .unique(Some(vec![unique_key.into()]), UniqueKeepStrategy::Last)
+        .sort(["time"], Default::default())
+        .collect()?;
 
     // Get the last date from the data within the target year
     // Filter to only dates in this year to handle midnight boundary cases

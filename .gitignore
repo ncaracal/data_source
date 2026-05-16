@@ -11,3 +11,6 @@ exchange_info_*.json
 .last_run
 *.log
 python/_run/
+
+# Generated reports / run logs (keep the few already-tracked files)
+/report/

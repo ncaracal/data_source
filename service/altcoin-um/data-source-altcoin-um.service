@@ -1,0 +1,15 @@
+[Unit]
+Description=Data Source altcoin-um - download & aggregate altcoin um trade data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kat
+WorkingDirectory=/ndata/trade/data-source/data_source
+EnvironmentFile=/ndata/trade/data-source/data_source/.env
+ExecStart=/ndata/trade/data-source/data_source/service/altcoin-um/data-source-altcoin-um-run.sh
+TimeoutStartSec=72000
+
+[Install]
+WantedBy=multi-user.target

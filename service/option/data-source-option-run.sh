@@ -3,9 +3,8 @@ set -e
 
 DIR=/ndata/trade/data-source/data_source
 BIN="$DIR/target/release"
-PY="/ndata/trade/py312/bin/python3"
 STAMP="$DIR/service/option/.last_run"
-REPORT_DIR="$DIR/report/service"
+REPORT_DIR="$DIR/report/option"
 
 # On boot: skip if last run was less than 24h ago
 if [ "$1" = "--boot" ] && [ -f "$STAMP" ]; then
@@ -20,35 +19,14 @@ fi
 
 cd "$DIR"
 mkdir -p "$REPORT_DIR"
-REPORT="$REPORT_DIR/$(date -u +%F).report"
+DAY="$(date -u +%F)"
+# Mirror all stdout/stderr to a per-day run log (also visible in journal)
+exec > >(tee -a "$REPORT_DIR/$DAY.run.log") 2>&1
 
-echo "=== $(date) Starting data-source jobs ==="
-
-echo "--- aggTrades spot BTCUSDT ETHUSDT ---"
-"$BIN/data_source" -s BTCUSDT ETHUSDT -m spot -d aggTrades
+echo "=== $(date) Starting option jobs ==="
 
 echo "--- BVOLIndex ETHBVOLUSDT ---"
 "$BIN/data_source" -s ETHBVOLUSDT -m option -d BVOLIndex
-
-echo "--- agg_kline spot ---"
-"$BIN/agg_kline" -m spot -s BTCUSDT -s ETHUSDT --kline-1s
-
-echo "--- altcoin download + verify spot (non-fatal) ---"
-"$PY" python/altcoin_symbols_download_and_verify.py --exchange binance --market spot || \
-    echo "WARN: altcoin spot download/verify returned non-zero — continuing"
-
-echo "--- altcoin -> kline spot (non-fatal) ---"
-"$PY" python/altcoin_symbols_to_kline.py --exchange binance --market spot || \
-    echo "WARN: altcoin spot kline returned non-zero — continuing"
-
-echo "--- verify (informational; non-fatal) ---"
-{
-    echo "=== verify report $(date -u +%F) (UTC) ==="
-    echo
-    echo "----- spot BTCUSDT ETHUSDT -----"
-    "$PY" python/verify_with_binance_kline_api_last_day.py -s BTCUSDT ETHUSDT -m spot 2>&1 || true
-} >> "$REPORT"
-echo "verify output appended to $REPORT"
 
 date +%s > "$STAMP"
 echo "=== $(date) Done ==="

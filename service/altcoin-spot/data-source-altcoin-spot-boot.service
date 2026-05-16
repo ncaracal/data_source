@@ -1,0 +1,15 @@
+[Unit]
+Description=Data Source altcoin-spot - run on boot if last run > 24h ago
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kat
+WorkingDirectory=/ndata/trade/data-source/data_source
+EnvironmentFile=/ndata/trade/data-source/data_source/.env
+ExecStart=/ndata/trade/data-source/data_source/service/altcoin-spot/data-source-altcoin-spot-run.sh --boot
+TimeoutStartSec=72000
+
+[Install]
+WantedBy=multi-user.target

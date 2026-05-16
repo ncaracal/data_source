@@ -34,7 +34,8 @@ from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TRADE_DATA = Path(os.environ.get("TRADE_DATA", "/ndata/trade/data"))
-LOG_DIR = REPO_ROOT / "report" / "running_log"
+REPORT_BASE = Path(os.environ.get("DATA_SOURCE_REPORT_DIR", REPO_ROOT / "report"))
+LOG_DIR = REPORT_BASE / "running_log"
 EXCEPT_JSON = Path(__file__).resolve().parent / "altcoin_symbols_except.json"
 
 MARKET_PATHS: dict[str, Path] = {

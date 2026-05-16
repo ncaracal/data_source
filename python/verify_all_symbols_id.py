@@ -43,7 +43,8 @@ import pyarrow.parquet as pq
 
 TRADE_DATA = Path(os.environ.get("TRADE_DATA", "/ndata/trade/data"))
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REPORT_DIR = REPO_ROOT / "report" / "verify_all_symbols_id"
+REPORT_BASE = Path(os.environ.get("DATA_SOURCE_REPORT_DIR", REPO_ROOT / "report"))
+REPORT_DIR = REPORT_BASE / "verify_all_symbols_id"
 
 # (exchange, market) -> sub-path under $TRADE_DATA
 MARKET_PATHS: dict[tuple[str, str], Path] = {

@@ -1,0 +1,9 @@
+[Unit]
+Description=Run data-source-altcoin-um daily at 08:20 UTC
+
+[Timer]
+OnCalendar=*-*-* 08:20:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
