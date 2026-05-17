@@ -90,6 +90,20 @@ def load_except_list() -> list[str]:
     return json.loads(EXCEPT_JSON.read_text())
 
 
+def _spot_symbol_set(exchange: str) -> set[str] | None:
+    """TRADING + USDT-quoted spot symbols, or None if the file is missing."""
+    info_path = TRADE_DATA / exchange / "exchange_info_spot.json"
+    if not info_path.is_file():
+        log(f"WARN: spot exchange_info not found at {info_path} "
+            f"— skipping um∩spot filter")
+        return None
+    info = json.loads(info_path.read_text())
+    return {
+        s["symbol"] for s in info.get("symbols", [])
+        if s.get("status") == "TRADING" and s.get("quoteAsset") == "USDT"
+    }
+
+
 def select_symbols(exchange: str, market: str,
                    except_set: set[str]) -> list[str]:
     market_path = MARKET_PATHS[market]
@@ -100,6 +114,15 @@ def select_symbols(exchange: str, market: str,
         p.name for p in src.iterdir()
         if p.is_dir() and not p.name.startswith("_")
     )
+    # um is restricted to symbols that also exist in the spot universe
+    # (exact symbol match); um-only perps (e.g. 1000PEPEUSDT) are dropped.
+    if market == "um":
+        spot_set = _spot_symbol_set(exchange)
+        if spot_set is not None:
+            before = len(all_dirs)
+            all_dirs = [s for s in all_dirs if s in spot_set]
+            log(f"    um∩spot filter: {before} -> {len(all_dirs)} "
+                f"(dropped {before - len(all_dirs)} um-only)")
     selected = [s for s in all_dirs if s not in except_set]
     skipped = sorted(s for s in all_dirs if s in except_set)
     log(f"    src: {src}")

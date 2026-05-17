@@ -122,6 +122,16 @@ def load_except_list() -> list[str]:
     return json.loads(EXCEPT_JSON.read_text())
 
 
+def _spot_symbol_set(exchange: str) -> set[str]:
+    """TRADING + USDT-quoted symbols from the spot exchange_info on disk."""
+    _, spot_path = EXCHANGE_INFO[(exchange, "spot")]
+    info = json.loads(spot_path.read_text())
+    return {
+        s["symbol"] for s in info.get("symbols", [])
+        if s.get("status") == "TRADING" and s.get("quoteAsset") == "USDT"
+    }
+
+
 def select_symbols(exchange: str, market: str,
                    except_set: set[str]) -> list[str]:
     _, info_path = EXCHANGE_INFO[(exchange, market)]
@@ -135,6 +145,14 @@ def select_symbols(exchange: str, market: str,
         if s.get("status") == "TRADING"
         and s.get("quoteAsset") == "USDT"
     ]
+    # um is restricted to symbols that also exist in the spot universe
+    # (exact symbol match); um-only perps (e.g. 1000PEPEUSDT) are dropped.
+    if market == "um":
+        spot_set = _spot_symbol_set(exchange)
+        before = len(eligible)
+        eligible = [s for s in eligible if s in spot_set]
+        log(f"    um∩spot filter: {before} -> {len(eligible)} "
+            f"(dropped {before - len(eligible)} um-only)")
     selected = sorted(s for s in eligible if s not in except_set)
     skipped = sorted(s for s in eligible if s in except_set)
     log(f"    eligible TRADING/USDT: {len(eligible)} | "
